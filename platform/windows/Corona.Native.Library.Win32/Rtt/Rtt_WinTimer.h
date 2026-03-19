@@ -215,9 +215,12 @@ namespace Rtt
 		///   until the message queue was idle.
 		///  </para>
 		///  <para>
-		///   Declared public so RenderSurfaceControl's WM_CORONA_TIMER handler can
-		///   access it if needed for diagnostics. Normal operation only requires
-		///   ThreadLoop() and Evaluate() to access it.
+		///   Declared public so RuntimeEnvironment::RuntimeDelegate::DidResume() can
+		///   reset it after every runtime resume. The reset must live in DidResume()
+		///   rather than RuntimeEnvironment::Resume() because the Simulator calls
+		///   Rtt::Runtime::Resume() directly via GetRuntime(), bypassing
+		///   RuntimeEnvironment::Resume() entirely. DidResume() is the only reliable
+		///   hook point that fires after every resume regardless of call path.
 		///  </para>
 		/// </summary>
 		std::atomic<bool> fTickPending;
