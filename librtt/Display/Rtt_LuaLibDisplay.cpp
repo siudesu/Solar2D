@@ -36,7 +36,6 @@
 #include "Renderer/Rtt_Texture.h"
 #include "Renderer/Rtt_VideoSource.h"
 
-#include "Display/Rtt_EmitterObject.h"
 
 #include "Corona/CoronaLibrary.h"
 #include "Corona/CoronaLua.h"
@@ -46,8 +45,6 @@
 #endif // Rtt_EXPERIMENTAL_FILTER
 
 #include "Display/Rtt_PlatformBitmap.h"
-#include "Rtt_ContainerObject.h"
-#include "Rtt_ClosedPath.h"
 #include "Display/Rtt_EmbossedTextObject.h"
 #include "Display/Rtt_ImageFrame.h"
 #include "Display/Rtt_ImageSheet.h"
@@ -64,8 +61,8 @@
 #include "Rtt_Runtime.h"
 #include "Display/Rtt_SpriteObject.h"
 #include "Display/Rtt_TextObject.h"
-#include "Renderer/Rtt_Texture.h"
 #include "Renderer/Rtt_Renderer.h"
+#include "Rtt_PlatformTimer.h"
 
 #include "Rtt_Event.h"
 #include "Rtt_LuaResource.h"
@@ -79,6 +76,7 @@
 #include "Rtt_LuaAux.h"
 
 #include "Display/Rtt_TesselatorPolygon.h"
+
 
 #ifdef Rtt_WIN_ENV
 #undef CreateFont
@@ -174,6 +172,8 @@ class DisplayLibrary
 		static int getSums( lua_State *L );
 		static int getTimings( lua_State *L );
 
+        static int setRenderSync(lua_State* L);
+
 		static int _initProfiling( lua_State *L );
 		static int _allocateProfile( lua_State *L );
 	#ifdef Rtt_DEBUG
@@ -253,6 +253,7 @@ DisplayLibrary::Open( lua_State *L )
 		{ "getStatistics", getStatistics },
 		{ "getSums", getSums },
 		{ "getTimings", getTimings },
+        { "setRenderSync", setRenderSync },
 
 		{ "_initProfiling", _initProfiling },
 		{ "_allocateProfile", _allocateProfile },
@@ -383,9 +384,10 @@ DisplayLibrary::ValueForKey( lua_State *L )
         "safeScreenOriginY", //23
         "safeActualContentWidth", //24
         "safeActualContentHeight", //25
+        "refreshRate", // 26
     };
     
-    static StringHash sHash( *LuaContext::GetAllocator( L ), keys, sizeof( keys ) / sizeof(const char *), 26, 26, 17, __FILE__, __LINE__ );
+    static StringHash sHash( *LuaContext::GetAllocator( L ), keys, sizeof( keys ) / sizeof(const char *), 27, 27, 17, __FILE__, __LINE__ );
     StringHash *hash = &sHash;
 
     int index = hash->Lookup( key );
@@ -554,6 +556,12 @@ DisplayLibrary::ValueForKey( lua_State *L )
             lua_pushnumber( L, display.ActualContentHeight() - ((top + bottom)*display.GetSy()) );
         }
         break;
+    case 26:    // "refreshRate"
+        {
+            Runtime& runtime = *LuaContext::GetRuntime(L);
+            lua_pushnumber(L, runtime.GetTimer()->GetRefreshRate());
+            break;
+        }
     default:
         {
             result = 0;
@@ -2971,6 +2979,24 @@ DisplayLibrary::getTimings( lua_State *L )
 	lua_pushinteger( L, 0 );
 
 	return 1;
+}
+
+int
+DisplayLibrary::setRenderSync(lua_State* L)
+{
+    // display.setRenderSync(bool)
+    // When true, the render loop syncs to the monitor refresh rate while
+    // logic continues at the rate set by fps in config.lua.
+    // When false (default), render runs at the same rate as logic —
+    // no duplicate frames are produced.
+    // Note: without engine-side interpolation, render-only frames are
+    // redraws of the same state. This is groundwork for a future
+    // interpolation feature.
+    bool enabled = lua_toboolean(L, 1);
+    Runtime& runtime = *LuaContext::GetRuntime(L);
+    runtime.SetProperty(Runtime::kFrameSync, enabled);
+    runtime.GetTimer()->SetFrameSync(enabled);
+    return 0;
 }
 
 int

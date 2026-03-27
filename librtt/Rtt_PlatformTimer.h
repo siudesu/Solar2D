@@ -42,13 +42,33 @@ class PlatformTimer
 		// But as a more general principle, we may want all platforms to use a "nice-to-CPU" background timer which invokes less frequently to ease CPU cost. 
 		virtual void SwitchToForegroundTimer();
 		virtual void SwitchToBackgroundTimer();
+
+		// Returns the display refresh rate in Hz.
+		// Overridden by platform-specific subclasses (e.g. WinTimer).
+		// Defaults to 60 for platforms that do not provide a native query.
+		virtual double GetRefreshRate() const { return 60.0; }
+
+		/// <summary>
+		///  <para>Controls whether the render loop syncs to the monitor refresh rate.</para>
+		///  <para>
+		///   When false (default), render runs at the same rate as logic (config.lua fps)
+		///   and no duplicate frames are produced.
+		///  </para>
+		///  <para>
+		///   When true, render posts VSYNC-rate ticks independent of the logic rate.
+		///   Without engine-side interpolation, render-only frames are redraws of the
+		///   same state — this is groundwork for a future interpolation feature.
+		///  </para>
+		///  <para>Overridden by platform-specific subclasses (e.g. WinTimer).</para>
+		/// </summary>
+		virtual void SetFrameSync(bool enabled) {}
 	
 	public:
 		// Allow manual invocation
 		Rtt_FORCE_INLINE void operator()() { fCallback(); }
 
-//	protected:
-//		Rtt_FORCE_INLINE MCallback& Callback() { return fCallback; }
+	protected:
+		Rtt_FORCE_INLINE MCallback& Callback() { return fCallback; }
 
 	private:
 		MCallback& fCallback;

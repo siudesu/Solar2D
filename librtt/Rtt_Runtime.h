@@ -76,6 +76,7 @@ class Runtime : public MCallback,
 			kShouldVerifyLicense      = 0x1000,
 			kIsSimulatorExtension     = 0x2000,
 			kShowRuntimeErrorsSet     = 0x4000,
+			kFrameSync				  = 0x8000,
 		}
 		Properties;
 
@@ -335,8 +336,8 @@ class Runtime : public MCallback,
 	public:
 		// MCallback
 		virtual void operator()();
-
-		void Render();
+		void Step();    // advance logic one tick (scheduler, display update, frame counter)
+		void Render();  // render current frame
 
 	public:
 		void Blit();
