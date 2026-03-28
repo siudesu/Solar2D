@@ -905,7 +905,11 @@ Runtime::ReadConfig( lua_State *L )
 
 	lua_getfield(L, -1, "fps");
 	int fps = (int)lua_tointeger(L, -1);
-	if (60 == fps || 120 == fps)	// Besides default (30), 60 and 120 fps are supported
+#ifdef Rtt_WIN_ENV
+	if (60 == fps || 120 == fps)  // Besides default (30), 60 and 120 fps are supported on Windows
+#else
+	if (60 == fps)                // Besides default (30), only 60 fps is supported on other platforms
+#endif
 	{
 		Rtt_ASSERT(!IsProperty(kIsApplicationLoaded));
 		fFPS = fps;
@@ -1391,7 +1395,7 @@ Runtime::BeginRunLoop()
 	// Only applies downward — a configured fps lower than the refresh rate
 	// (e.g. 30fps on a 120Hz monitor) is always respected as-is.
 	double refreshRate = fTimer->GetRefreshRate();
-	if (fFPS > (U8)refreshRate)
+	if (refreshRate > 0.0 && fFPS > (U8)refreshRate)
 	{
 		Rtt_LogException("WARNING: config.lua fps (%d) exceeds display refresh rate (%.0fHz). Capping to %.0ffps.\n",
 			fFPS, refreshRate, refreshRate);
@@ -1976,6 +1980,9 @@ Runtime::EndOrientationListener()
 	fPlatform.GetDevice().SetOrientationCallback( NULL );
 }
 */
+
+#ifdef Rtt_WIN_ENV
+
 void
 Runtime::Step()
 {
@@ -2024,6 +2031,49 @@ Runtime::operator()()
 		Render();
 	}
 }
+
+#else // ! Rtt_WIN_ENV
+
+void
+Runtime::operator()()
+{
+	// Original implementation preserved exactly for all non-Windows platforms.
+	// Do not modify this block without testing on the target platform.
+	RuntimeGuard guard(*this);
+
+	if (!Rtt_VERIFY(fDisplay))
+	{
+		return;
+	}
+
+	const bool wasSuspended = IsSuspended();
+	fScheduler->Run();
+	const bool isSuspended = IsSuspended();
+	if (wasSuspended != isSuspended && isSuspended)
+	{
+		// This condition is written inverse for better understanding
+		// Sometimes (Splash Screen is shown) scheduled tasks can suspend Runtime
+		// In that case (suspension state is changed and it is suspended), skip Display update
+	}
+	else
+	{
+#if defined(Rtt_AUTHORING_SIMULATOR)
+		if (m_fAsyncResultStr.load()) {
+			FinalizeWorkingThreadWithEvent(this, fVMContext->L());
+		}
+#endif
+		fDisplay->Update();
+
+		++fFrame;
+	}
+
+	if (!IsProperty(kRenderAsync))
+	{
+		fDisplay->Render();
+	}
+}
+
+#endif // Rtt_WIN_ENV
 
 void
 Runtime::Render()
