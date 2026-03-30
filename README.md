@@ -1,73 +1,111 @@
-# Solar2D Game Engine
-Download the latest build from the [Releases](https://github.com/coronalabs/corona/releases) page and join the community on [Discord](https://discord.gg/Abf5V9G) and the [forums](https://forums.solar2d.com/).
+## Branch: `fix/windows-frame-pacing`
 
-## Rebranded Corona SDK
-> Simple to learn and use, completely free and open source 2D game engine.
+This branch replaces the legacy Windows `WM_TIMER` frame delivery mechanism with a DWM-synchronized background thread, eliminating frame pacing issues and enabling consistent sub-millisecond frame timing on Windows.
 
-![Solar2D Logo](logo.png)
+---
 
-## Easy-to-learn & powerful
-Solar2D is a cross-platform framework which is ideal for rapidly creating apps and games for mobile devices, TV, desktop systems and HTML5. That means you can create your project once and publish it to multiple devices, including Apple iPhone and iPad, Android phones and tablets, Amazon Fire, Mac Desktop, Windows Desktop, Linux, HTML5 and even connected TVs such as Apple TV, Amazon Fire TV, and Android TV.
+## The problem
 
-## Benefits of usage Solar2D
-* Free for everybody – Enterprise features for every developer.
-* The easiest development tool for 2D games and mobile applications.
-* Solar2D allows creating apps easily, up to 10 times faster than other frameworks. 
-* Supported by a detailed documentation system. 
-* Write the code once, run it many different places – Solar2D supports all major mobile platforms.
-* Constantly growing pool of first-party and community provided plugins and ready-to-go app assets.
-* A vibrant community of both application and game developers.
-* Simulator, which runs the app directly on PC/Mac, simplifies the prototyping process and helps quickly test ideas and concepts.
-* A logical and consistent API that covers over 1000 functions and allows to get things up and running very fast.
+The original Windows implementation used `WM_TIMER` for frame delivery. This had two fundamental issues:
 
-## Feature highlights
+- **~15.6ms system timer resolution** — Windows defaults to a 15.6ms timer interrupt interval, making it impossible to accurately schedule 60fps frames (16.67ms budget) with `WM_TIMER` alone.
+- **Queue-idle delivery** — `WM_TIMER` is a low-priority message that Windows only delivers when the message queue is idle. Under any load, frames arrived late and erratically, causing visible stutter regardless of timer interval settings.
 
-### Simulator and Live Builds
-Solar2D speeds up the development process - update your code, save the changes, and instantly see the results in our instant-update Simulator. When you're ready to test on real devices, build and deploy your app just once and then see code/assets, update automatically, all over your local network. Just like magic.
+The result was inconsistent frame pacing — frames that should arrive every 16.67ms at 60fps would instead arrive at irregular intervals, causing jitter and stutter especially during smooth scrolling and camera movement.
 
-### Lua-based
-Lua is an open source scripting language designed to be lightweight, fast, yet also powerful. Lua is currently the leading scripting language in games and has been utilized in Roblox, The Elder Scrolls Online, Don't Starve, World of Warcraft ™, Angry Birds ™, Civilization ™, and [many other popular franchises.](https://en.wikipedia.org/wiki/Category:Lua_(programming_language)-scripted_video_games)
+---
 
-### Use with your favorite text editor
-You can use Sublime Text([Editor](https://github.com/coronalabs/CoronaSDK-SublimeText#installation-instructions)), Atom([autocomplete-corona](https://atom.io/packages/autocomplete-corona)), Visual Studio Code([Solar2d-companion](https://marketplace.visualstudio.com/items?itemName=M4adan.solar2d-companion)), ZeroBrane Studio and many others.
+## The fix
 
-### Plugins for all needs
-Select from numerous plugins which extend the Solar2D core for features like in-app advertising, analytics, media, and much more. A vast variety of plugins is available via [Solar2D free directory](https://plugins.solar2d.com/) or third party stores, like [Solar2D Marketplace](https://solar2dmarketplace.com/) and [Solar2D Plugins](https://www.solar2dplugins.com/).
+Replaced `WM_TIMER` with a DWM-synchronized background thread in `WinTimer`. When DWM composition is available (Windows Vista+, all modern hardware), the thread:
 
-### Call any native library
-If it’s not already in the core or supported via a plugin, you can call any native (C/C++/Obj-C/Java) library or API using Solar2D Native. It also allows to easily package your code as a plugin.
+1. Queries the monitor refresh rate via `EnumDisplaySettings`
+2. Uses `timeBeginPeriod(1)` to raise system timer resolution to 1ms
+3. Sleeps until ~1ms before each frame deadline
+4. Spins with `YieldProcessor()` for sub-millisecond precision in the final millisecond
+5. Posts `WM_CORONA_TIMER` to the main thread — keeping Lua runtime calls safely on the main thread
 
-### Cross-platform
-Develop for mobile, desktop, and connected TV devices with just one code base.
+The result is frame delivery phase-locked to the monitor's refresh cycle with ~1ms jitter, consistent at 60fps, 120fps, and any refresh rate the monitor supports.
 
-## Installation
-The easiest and recommended way to get started with Solar2D is to download binary distribution from the [releases](https://github.com/coronalabs/corona/releases) page.
+On systems where DWM is unavailable (remote desktop, older Windows), the implementation falls back to the original `WM_TIMER` behavior automatically.
 
+---
 
-### API documentation and guides
-Exhaustive Solar2D API documentation, as well as getting started and more advanced guides are available on [docs.coronalabs.com](https://docs.coronalabs.com).
+## Architecture
 
-## Source Code and licensing
-Solar2D is licensed under [MIT](LICENSE) open source license.
-
-This license gives you the full rights to customize the engine and distribute built apps on your own terms. 
-
-Note that Solar2D incorporates many libraries, both [third-party](sdk/dmg/Corona3rdPartyLicenses.txt) and made by Solar2D developers. They may have different licenses.
-
-
-## Contributing
-
-If you are willing to improve Solar2D by contributing code, fork this repository and create a pull request with desired improvements. The project uses [git submodules](https://git-scm.com/book/en/Git-Tools-Submodules), so to clone the whole source code tree run
-
-```sh
-git clone --recursive https://github.com/coronalabs/corona.git
+```
+Background thread (DWM-sync)          Main thread
+─────────────────────────────         ──────────────────────
+QueryPerformanceCounter loop
+  │
+  ├─ Sleep (deadline - 1ms)
+  │
+  └─ Spin (YieldProcessor)
+       │
+       └─ Deadline reached
+            │
+            ├─ fTickPending gate ──── prevents queue flooding
+            │
+            └─ PostMessage(WM_CORONA_TIMER)
+                                           │
+                                      RenderSurfaceControl
+                                           │
+                                      WinTimer::Evaluate()
+                                           │
+                                      Runtime::operator()()
+                                      (logic + render)
 ```
 
-Due to the open source nature of Solar2D distribution, all contributors would have to sign a simple Contributor License Agreement (CLA) to ensure that their code can be part of Solar2D ecosystem. For more details see [CONTRIBUTING.md](CONTRIBUTING.md).
+**`fTickPending` gate** — ensures at most one `WM_CORONA_TIMER` is in the message queue at any time. If the main thread is busy when the next tick fires, the tick is skipped rather than queued. The timing loop continues advancing so no drift accumulates. This mirrors the natural idle-queue behavior of `WM_TIMER` without sacrificing frame timing precision.
 
-Entry points for each platform are located in the `platform` directory. Refer to README.md files in its subdirectories.
+---
 
-## Governance and Code of Conduct
-Solar2D is maintained by community, with principal developer [shchvova](https://github.com/shchvova). Our mission is to make Solar2D the best game engine ever.
+## Files changed
 
-To participate in the Solar2D community or development you must follow the Solar2D Community Code of Conduct (see [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md))
+```
+platform/windows/Corona.Native.Library.Win32/Rtt/Rtt_WinTimer.h
+platform/windows/Corona.Native.Library.Win32/Rtt/Rtt_WinTimer.cpp
+platform/windows/Corona.Native.Library.Win32/Rtt/Rtt_WinScreenSurface.cpp
+platform/windows/Corona.Native.Library.Win32/Interop/RuntimeEnvironment.cpp
+platform/windows/Corona.Native.Library.Win32/Interop/UI/RenderSurfaceControl.cpp
+```
+
+All changes are strictly Windows-specific. No shared engine code (`librtt`) was modified in this branch.
+
+---
+
+## Key implementation details
+
+### `Rtt_WinTimer.cpp` — `ThreadLoop()`
+- Queries monitor Hz via `GetRefreshRate()` → `EnumDisplaySettings`
+- Sleep/spin loop phase-locked to `targetFrameTime = 1.0 / refreshRate`
+- `fTickPending` atomic flag gates message posting
+
+### `Rtt_WinTimer.cpp` — `Start()` / `Stop()`
+- `timeBeginPeriod(1)` on start, `timeEndPeriod(1)` on stop
+- Background thread created with `CreateThread`, signaled to stop via `CreateEvent`
+- Falls back to `SetTimer` if `DwmIsCompositionEnabled` returns false
+
+### `Rtt_WinScreenSurface.cpp`
+- Additional `timeBeginPeriod(1)` for the lifetime of the rendering surface
+- Ensures 1ms resolution is active even during edge cases where the timer is not running
+
+### `RuntimeEnvironment.cpp` — `DidResume()`
+- Resets `fTickPending` after every runtime resume
+- Placed in `DidResume()` rather than `Resume()` because the Simulator calls `Rtt::Runtime::Resume()` directly, bypassing `RuntimeEnvironment::Resume()`
+
+---
+
+## Fallback behavior
+
+| Environment | Path used |
+|---|---|
+| Windows 8+ with DWM | DWM-sync thread (this fix) |
+| Remote desktop | Legacy `WM_TIMER` fallback |
+| Older Windows without DWM | Legacy `WM_TIMER` fallback |
+
+---
+
+## No breaking changes
+
+All existing projects build and run identically. The fallback path preserves the original `WM_TIMER` behavior exactly for environments where DWM is unavailable.
