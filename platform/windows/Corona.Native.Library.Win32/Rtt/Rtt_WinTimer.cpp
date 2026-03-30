@@ -11,15 +11,23 @@
 #include "Rtt_WinTimer.h"
 #include <windows.h>
 #include <dwmapi.h>
+#include <dxgi.h>
 #include <timeapi.h>
 
-// Required for DwmIsCompositionEnabled() used to detect whether the display-sync
-// thread path is available on this system.
+
+// Required for DwmIsCompositionEnabled() and DwmGetCompositionTimingInfo()
+// used to detect DWM availability and query compositor refresh timing.
 #pragma comment(lib, "dwmapi.lib")
 
 // Required for timeBeginPeriod()/timeEndPeriod() which set the system timer
 // resolution to 1ms, enabling accurate Sleep() granularity in the frame loop.
 #pragma comment(lib, "winmm.lib")
+
+// Required for IDXGIFactory/IDXGIOutput used by GetRefreshRateFromDXGI()
+// to query the actual fractional monitor refresh rate directly from the
+// GPU driver. More accurate than EnumDisplaySettings which truncates to
+// integer Hz values.
+#pragma comment(lib, "dxgi.lib")
 
 namespace Rtt
 {
@@ -376,23 +384,119 @@ namespace Rtt
 		}
 	}
 
+	double WinTimer::GetRefreshRateFromDXGI() const
+	{
+		double result = 0.0;
+
+		// Get the monitor the window is currently displayed on.
+		// MONITOR_DEFAULTTONEAREST falls back to the nearest monitor
+		// if the window is between displays or offscreen.
+		HMONITOR hMonitor = ::MonitorFromWindow(fWindowHandle, MONITOR_DEFAULTTONEAREST);
+		if (!hMonitor) return result;
+
+		// Get the monitor's device name so we can match it in DXGI.
+		MONITORINFOEX monitorInfo = {};
+		monitorInfo.cbSize = sizeof(monitorInfo);
+		if (!::GetMonitorInfo(hMonitor, &monitorInfo)) return result;
+
+		// Walk DXGI adapters and outputs to find the one matching this monitor.
+		IDXGIFactory* factory = nullptr;
+		if (FAILED(::CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)&factory)))
+			return result;
+
+		IDXGIAdapter* adapter = nullptr;
+		for (UINT i = 0; factory->EnumAdapters(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i)
+		{
+			IDXGIOutput* output = nullptr;
+			for (UINT j = 0; adapter->EnumOutputs(j, &output) != DXGI_ERROR_NOT_FOUND; ++j)
+			{
+				DXGI_OUTPUT_DESC desc;
+				if (SUCCEEDED(output->GetDesc(&desc)))
+				{
+					// Match by device name to find the correct monitor.
+					if (wcscmp(desc.DeviceName, monitorInfo.szDevice) == 0)
+					{
+						DEVMODE dm = {};
+						dm.dmSize = sizeof(dm);
+						if (::EnumDisplaySettings(desc.DeviceName,
+							ENUM_CURRENT_SETTINGS, &dm))
+						{
+							UINT numModes = 0;
+							DXGI_FORMAT format = DXGI_FORMAT_B8G8R8A8_UNORM;
+							output->GetDisplayModeList(format, 0, &numModes, nullptr);
+
+							if (numModes > 0)
+							{
+								std::vector<DXGI_MODE_DESC> modes(numModes);
+								output->GetDisplayModeList(format, 0,
+									&numModes, modes.data());
+
+								for (const auto& mode : modes)
+								{
+									if (mode.Width == dm.dmPelsWidth &&
+										mode.Height == dm.dmPelsHeight &&
+										mode.RefreshRate.Denominator > 0)
+									{
+										double hz =
+											static_cast<double>(mode.RefreshRate.Numerator) /
+											static_cast<double>(mode.RefreshRate.Denominator);
+
+										if (fabs(hz - dm.dmDisplayFrequency) < 1.0)
+										{
+											result = hz;
+											break;
+										}
+									}
+								}
+							}
+						}
+						output->Release();
+						adapter->Release();
+						factory->Release();
+						return result;
+					}
+				}
+				output->Release();
+			}
+			adapter->Release();
+		}
+
+		factory->Release();
+		return result;
+	}
+
 	double WinTimer::GetRefreshRate() const
 	{
-		// Query the current display settings to obtain the monitor refresh rate.
-		// This is used by ThreadLoop to determine the base tick interval so that
-		// frame delivery is phase-locked to the display regardless of refresh rate.
-		DEVMODE dm = {};
-		dm.dmSize = sizeof(dm);
+		// Try DXGI first — most accurate, directly from GPU driver.
+		// Correctly returns fractional rates like 59.94Hz that
+		// EnumDisplaySettings truncates to integers.
+		double hz = GetRefreshRateFromDXGI();
 
-		if (::EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &dm))
+		if (hz > 0.0) return hz;
+
+		// Fall back to DWM compositor timing info.
+		DWM_TIMING_INFO timingInfo = {};
+		timingInfo.cbSize = sizeof(timingInfo);
+		if (SUCCEEDED(::DwmGetCompositionTimingInfo(nullptr, &timingInfo)))
 		{
-			if (dm.dmDisplayFrequency > 1)
+			if (timingInfo.rateRefresh.uiNumerator > 0 &&
+				timingInfo.rateRefresh.uiDenominator > 0)
 			{
-				return static_cast<double>(dm.dmDisplayFrequency);
+				return static_cast<double>(timingInfo.rateRefresh.uiNumerator) /
+					static_cast<double>(timingInfo.rateRefresh.uiDenominator);
 			}
 		}
 
-		// Safe fallback — assumes 60Hz if the display settings cannot be queried.
+		// Final fallback — EnumDisplaySettings integer value.
+		DEVMODE dm = {};
+		dm.dmSize = sizeof(dm);
+		if (::EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &dm))
+		{
+			if (dm.dmDisplayFrequency > 1)
+				return static_cast<double>(dm.dmDisplayFrequency);
+		}
+
+		// Safe fallback — assumes 60Hz if all queries fail.
 		return 60.0;
 	}
 
