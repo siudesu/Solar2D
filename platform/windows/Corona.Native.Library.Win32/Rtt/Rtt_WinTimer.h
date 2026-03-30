@@ -117,6 +117,21 @@ namespace Rtt
 		void ThreadLoop();
 
 		/// <summary>
+		///  <para>Queries the actual display refresh rate from the DXGI graphics driver.</para>
+		///  <para>
+		///   Identifies the monitor the window is currently displayed on via
+		///   MonitorFromWindow() and matches it against DXGI outputs by device name,
+		///   ensuring the correct refresh rate is returned on multi-monitor systems.
+		///  </para>
+		///  <para>
+		///   Returns fractional rates accurately (e.g. 59.883Hz) unlike
+		///   EnumDisplaySettings which truncates to integers.
+		///  </para>
+		///  <para>Returns 0.0 if the query fails.</para>
+		/// </summary>
+		double GetRefreshRateFromDXGI() const;
+
+		/// <summary>
 		///  <para>Queries the current display refresh rate using EnumDisplaySettings.</para>
 		///  <para>Used by ThreadLoop to determine the base tick interval for frame scheduling.</para>
 		///  <returns>Returns the refresh rate in Hz, or 60.0 as a safe fallback.</returns>
