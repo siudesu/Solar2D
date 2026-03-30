@@ -1,73 +1,199 @@
-# Solar2D Game Engine
-Download the latest build from the [Releases](https://github.com/coronalabs/corona/releases) page and join the community on [Discord](https://discord.gg/Abf5V9G) and the [forums](https://forums.solar2d.com/).
+## Branch: `feature/windows-render-decouple`
 
-## Rebranded Corona SDK
-> Simple to learn and use, completely free and open source 2D game engine.
+This branch builds on `fix/windows-frame-pacing` to decouple the logic update and rendering paths in the Windows engine, adds 120fps support, introduces a monitor refresh rate cap, and exposes new Lua APIs for high-refresh-rate displays.
 
-![Solar2D Logo](logo.png)
+---
 
-## Easy-to-learn & powerful
-Solar2D is a cross-platform framework which is ideal for rapidly creating apps and games for mobile devices, TV, desktop systems and HTML5. That means you can create your project once and publish it to multiple devices, including Apple iPhone and iPad, Android phones and tablets, Amazon Fire, Mac Desktop, Windows Desktop, Linux, HTML5 and even connected TVs such as Apple TV, Amazon Fire TV, and Android TV.
+## The problem
 
-## Benefits of usage Solar2D
-* Free for everybody – Enterprise features for every developer.
-* The easiest development tool for 2D games and mobile applications.
-* Solar2D allows creating apps easily, up to 10 times faster than other frameworks. 
-* Supported by a detailed documentation system. 
-* Write the code once, run it many different places – Solar2D supports all major mobile platforms.
-* Constantly growing pool of first-party and community provided plugins and ready-to-go app assets.
-* A vibrant community of both application and game developers.
-* Simulator, which runs the app directly on PC/Mac, simplifies the prototyping process and helps quickly test ideas and concepts.
-* A logical and consistent API that covers over 1000 functions and allows to get things up and running very fast.
+The original engine fused logic and rendering into a single synchronous call — `Runtime::operator()()`. Every frame ran the scheduler, dispatched Lua `enterFrame`, stepped physics, and rendered — all in one tick. This made it impossible to:
 
-## Feature highlights
+- Run logic at a fixed rate while rendering at a higher rate
+- Support 120fps logic on hardware that can run it
+- Lay groundwork for future engine-side interpolation
 
-### Simulator and Live Builds
-Solar2D speeds up the development process - update your code, save the changes, and instantly see the results in our instant-update Simulator. When you're ready to test on real devices, build and deploy your app just once and then see code/assets, update automatically, all over your local network. Just like magic.
+---
 
-### Lua-based
-Lua is an open source scripting language designed to be lightweight, fast, yet also powerful. Lua is currently the leading scripting language in games and has been utilized in Roblox, The Elder Scrolls Online, Don't Starve, World of Warcraft ™, Angry Birds ™, Civilization ™, and [many other popular franchises.](https://en.wikipedia.org/wiki/Category:Lua_(programming_language)-scripted_video_games)
+## What changed
 
-### Use with your favorite text editor
-You can use Sublime Text([Editor](https://github.com/coronalabs/CoronaSDK-SublimeText#installation-instructions)), Atom([autocomplete-corona](https://atom.io/packages/autocomplete-corona)), Visual Studio Code([Solar2d-companion](https://marketplace.visualstudio.com/items?itemName=M4adan.solar2d-companion)), ZeroBrane Studio and many others.
+### Logic / render decoupling (Windows)
 
-### Plugins for all needs
-Select from numerous plugins which extend the Solar2D core for features like in-app advertising, analytics, media, and much more. A vast variety of plugins is available via [Solar2D free directory](https://plugins.solar2d.com/) or third party stores, like [Solar2D Marketplace](https://solar2dmarketplace.com/) and [Solar2D Plugins](https://www.solar2dplugins.com/).
+`Runtime::operator()()` is split into two independent methods on Windows:
 
-### Call any native library
-If it’s not already in the core or supported via a plugin, you can call any native (C/C++/Obj-C/Java) library or API using Solar2D Native. It also allows to easily package your code as a plugin.
+- `Runtime::Step()` — advances simulation by one fixed tick: scheduler, Lua `enterFrame`, physics, display object state. Does not render.
+- `Runtime::Render()` — renders the current frame state. Already existed, now called explicitly and separately.
+- `Runtime::operator()()` — reduced to a shim calling `Step()` + `Render()` in sequence, keeping the Simulator and legacy path unchanged.
 
-### Cross-platform
-Develop for mobile, desktop, and connected TV devices with just one code base.
+All other platforms continue to use the original `operator()()` implementation exactly — no behavioral change.
 
-## Installation
-The easiest and recommended way to get started with Solar2D is to download binary distribution from the [releases](https://github.com/coronalabs/corona/releases) page.
+### 120fps support (Windows)
+
+`config.lua` now accepts `fps = 120` on Windows alongside `fps = 30` and `fps = 60`. Other platforms continue to support `fps = 30` and `fps = 60` only.
+
+### Monitor refresh rate cap
+
+`BeginRunLoop()` queries the monitor refresh rate at startup and caps `fFPS` downward if the configured value exceeds it. A warning is logged when the cap is applied.
+
+- `fps = 120` on a 120Hz monitor → runs at 120fps
+- `fps = 120` on a 60Hz monitor → auto-capped to 60fps, warning logged
+- `fps = 30` on any monitor → always runs at 30fps (downward only)
+- Non-Windows platforms → `GetRefreshRate()` returns 0.0 (unknown), cap is skipped entirely
+
+### Two message types
+
+`ThreadLoop()` now posts one of two messages per VSYNC tick:
+
+- `WM_CORONA_TIMER` — logic tick due. Main thread runs `Step()` + `Render()`.
+- `WM_CORONA_RENDER` — VSYNC fired, no logic tick due. Only posted when `setRenderSync(true)` is enabled. Main thread queues a `WM_PAINT` to redraw the current frame state.
+
+When `setRenderSync` is disabled (default), render-only ticks release `fTickPending` immediately without posting — render runs at logic rate with no duplicate frames.
+
+---
+
+## Architecture
+
+```
+DWM sync thread                        Main thread
+──────────────────────────────         ──────────────────────────────
+VSYNC tick
+  │
+  ├─ accumulator += targetFrameTime
+  │
+  ├─ acc >= intervalSeconds?
+  │     YES → doStep = true
+  │            accumulator = 0
+  │
+  ├─ fTickPending gate
+  │
+  ├─ doStep?
+  │     YES → PostMessage(WM_CORONA_TIMER) ──────────────→ Step() + Render()
+  │
+  ├─ frameSync enabled?
+  │     YES → PostMessage(WM_CORONA_RENDER) ─────────────→ InvalidateRect → WM_PAINT
+  │
+  └─ NO  → release fTickPending (no message posted)
 
 
-### API documentation and guides
-Exhaustive Solar2D API documentation, as well as getting started and more advanced guides are available on [docs.coronalabs.com](https://docs.coronalabs.com).
-
-## Source Code and licensing
-Solar2D is licensed under [MIT](LICENSE) open source license.
-
-This license gives you the full rights to customize the engine and distribute built apps on your own terms. 
-
-Note that Solar2D incorporates many libraries, both [third-party](sdk/dmg/Corona3rdPartyLicenses.txt) and made by Solar2D developers. They may have different licenses.
-
-
-## Contributing
-
-If you are willing to improve Solar2D by contributing code, fork this repository and create a pull request with desired improvements. The project uses [git submodules](https://git-scm.com/book/en/Git-Tools-Submodules), so to clone the whole source code tree run
-
-```sh
-git clone --recursive https://github.com/coronalabs/corona.git
+config.lua fps
+  └─ intervalSeconds = 1 / fps ──→ accumulator threshold
+  └─ BeginRunLoop() caps fFPS to monitor Hz if exceeded
 ```
 
-Due to the open source nature of Solar2D distribution, all contributors would have to sign a simple Contributor License Agreement (CLA) to ensure that their code can be part of Solar2D ecosystem. For more details see [CONTRIBUTING.md](CONTRIBUTING.md).
+---
 
-Entry points for each platform are located in the `platform` directory. Refer to README.md files in its subdirectories.
+## Frame rate behavior
 
-## Governance and Code of Conduct
-Solar2D is maintained by community, with principal developer [shchvova](https://github.com/shchvova). Our mission is to make Solar2D the best game engine ever.
+| Config fps | Monitor Hz | setRenderSync | Logic rate | Render rate | Notes |
+|---|---|---|---|---|---|
+| 30 | 60Hz | false | 30fps | 30fps | standard |
+| 30 | 120Hz | false | 30fps | 30fps | logic respected |
+| 30 | 144Hz | false | 30fps | 30fps | logic respected |
+| 60 | 56Hz | false | 56fps (capped) | 56fps | capped to monitor |
+| 60 | 60Hz | false | 60fps | 60fps | standard |
+| 60 | 75Hz | false | 60fps | 60fps | logic respected |
+| 60 | 120Hz | false | 60fps | 60fps | logic respected |
+| 60 | 144Hz | false | 60fps | 60fps | logic respected |
+| 120 | 60Hz | false | 60fps (capped) | 60fps | capped to monitor |
+| 120 | 75Hz | false | 75fps (capped) | 75fps | capped to monitor |
+| 120 | 120Hz | false | 120fps | 120fps | standard |
+| 120 | 144Hz | false | 120fps | 120fps | logic respected |
+| 60 | 60Hz | true | 60fps | 60fps | no benefit* |
+| 60 | 75Hz | true | 60fps | 75fps | render-only* |
+| 60 | 120Hz | true | 60fps | 120fps | render-only* |
+| 60 | 144Hz | true | 60fps | 144fps | render-only* |
+| 120 | 144Hz | true | 120fps | 144fps | render-only* |
 
-To participate in the Solar2D community or development you must follow the Solar2D Community Code of Conduct (see [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md))
+*render-only frames redraw last known state — no visual improvement without engine-side interpolation.
+
+---
+
+## New Lua API (Windows)
+
+### `display.refreshRate`
+
+Returns the monitor's actual refresh rate in Hz. Returns `nil` on non-Windows platforms.
+
+```lua
+local hz = display.refreshRate
+if hz then
+    print("Monitor: " .. hz .. "Hz")
+end
+```
+
+### `display.setRenderSync(bool)`
+
+Enables or disables VSYNC-rate rendering at runtime. Off by default.
+
+When `true`, the render loop syncs to the monitor refresh rate while logic continues at `config.lua fps`. Without engine-side interpolation, render-only frames are redraws of the same state — this is foundation infrastructure for a future interpolation feature.
+
+Returns a warning on non-Windows platforms.
+
+```lua
+display.setRenderSync(true)   -- sync render to monitor Hz
+display.setRenderSync(false)  -- render at logic rate (default)
+```
+
+### `fps = 120` in config.lua (Windows only)
+
+```lua
+-- config.lua
+application = {
+    content = {
+        fps = 120,  -- Windows only. Values: 30, 60, 120. Default: 30.
+                    -- auto-capped to monitor refresh rate if exceeded.
+    }
+}
+```
+
+---
+
+## Delta time
+
+Games targeting multiple fps values should calculate delta time manually for frame-rate independent movement. Without it, a game at 120fps moves objects twice as fast as at 60fps.
+
+```lua
+local lastTime = system.getTimer()
+
+Runtime:addEventListener("enterFrame", function(event)
+    local now = system.getTimer()
+    local dt = (now - lastTime) / 1000  -- seconds since last frame
+    lastTime = now
+
+    object.x = object.x + (object.speed * dt)  -- speed in units/second
+end)
+```
+
+---
+
+## Files changed
+
+### Shared (all platforms)
+```
+librtt/Display/Rtt_LuaLibDisplay.cpp   — display.refreshRate, display.setRenderSync()
+librtt/Rtt_PlatformTimer.h             — GetRefreshRate() virtual, SetFrameSync() virtual
+librtt/Rtt_Runtime.cpp                 — Step(), operator()() shim, ReadConfig() 120fps, BeginRunLoop() cap
+librtt/Rtt_Runtime.h                   — Step() declaration (WIN_ENV guard), kFrameSync property
+```
+
+### Windows only
+```
+platform/windows/.../Rtt_WinTimer.h              — WM_CORONA_RENDER, fLastMessage, fFrameSync, overrides
+platform/windows/.../Rtt_WinTimer.cpp            — ThreadLoop() dual message, Evaluate() dispatch, SetFrameSync()
+platform/windows/.../Rtt_WinScreenSurface.cpp    — timeBeginPeriod(1) for surface lifetime
+platform/windows/.../RuntimeEnvironment.cpp      — fTickPending reset in DidResume()
+platform/windows/.../UI/RenderSurfaceControl.cpp — WM_CORONA_RENDER handler, fLastMessage stamp
+```
+
+---
+
+## Important notes
+
+**`display.setRenderSync()`** is opt-in and off by default. Without engine-side interpolation, render-only ticks are redraws of the same frame state — on high refresh rate monitors this produces no visual improvement over running at the configured fps. The `Step()`/`Render()` split and `WM_CORONA_RENDER` path are foundation infrastructure for a future interpolation PR.
+
+**Non-Windows platforms** — `operator()()` is preserved exactly using `#ifdef Rtt_WIN_ENV` guards. `GetRefreshRate()` returns `0.0` on non-Windows (cap skipped). `SetFrameSync()` is a no-op. `display.refreshRate` returns `nil`. `display.setRenderSync()` logs a warning. No behavioral change on any non-Windows platform.
+
+---
+
+## No breaking changes
+
+All existing projects build and run identically unless `fps = 120` is explicitly set or `display.setRenderSync(true)` is called.
