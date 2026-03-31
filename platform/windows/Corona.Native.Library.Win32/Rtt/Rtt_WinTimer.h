@@ -16,6 +16,7 @@
 #include <unordered_map>
 #include <atomic>
 
+
 /// <summary>
 ///  Custom window messages posted from the display-sync thread to the main thread.
 ///  WM_CORONA_TIMER triggers a full logic + render tick (Step + Render).
@@ -80,6 +81,21 @@ namespace Rtt
 		void Evaluate();
 
 		/// <summary>
+		///  <para>Queries the actual display refresh rate from the DXGI graphics driver.</para>
+		///  <para>
+		///   Identifies the monitor the window is currently displayed on via
+		///   MonitorFromWindow() and matches it against DXGI outputs by device name,
+		///   ensuring the correct refresh rate is returned on multi-monitor systems.
+		///  </para>
+		///  <para>
+		///   Returns fractional rates accurately (e.g. 59.883Hz) unlike
+		///   EnumDisplaySettings which truncates to integers.
+		///  </para>
+		///  <para>Returns 0.0 if the query fails.</para>
+		/// </summary>
+		double GetRefreshRateFromDXGI() const;
+
+		/// <summary>
 		///  <para>Queries the current display refresh rate using EnumDisplaySettings.</para>
 		///  <para>Used by ThreadLoop to determine the base tick interval for frame scheduling.</para>
 		///  <returns>Returns the refresh rate in Hz, or 60.0 as a safe fallback.</returns>
@@ -135,28 +151,6 @@ namespace Rtt
 		///  </para>
 		/// </summary>
 		void ThreadLoop();
-
-		/// <summary>
-		///  <para>Queries the actual display refresh rate from the DXGI graphics driver.</para>
-		///  <para>
-		///   Identifies the monitor the window is currently displayed on via
-		///   MonitorFromWindow() and matches it against DXGI outputs by device name,
-		///   ensuring the correct refresh rate is returned on multi-monitor systems.
-		///  </para>
-		///  <para>
-		///   Returns fractional rates accurately (e.g. 59.883Hz) unlike
-		///   EnumDisplaySettings which truncates to integers.
-		///  </para>
-		///  <para>Returns 0.0 if the query fails.</para>
-		/// </summary>
-		double GetRefreshRateFromDXGI() const;
-
-		/// <summary>
-		///  <para>Queries the current display refresh rate using EnumDisplaySettings.</para>
-		///  <para>Used by ThreadLoop to determine the base tick interval for frame scheduling.</para>
-		///  <returns>Returns the refresh rate in Hz, or 60.0 as a safe fallback.</returns>
-		/// </summary>
-		double GetRefreshRate() const;
 
 		/// <summary>
 		///  <para>Called by Windows when the legacy system timer has elapsed.</para>
@@ -216,10 +210,11 @@ namespace Rtt
 		S32 fNextIntervalTimeInTicks;
 
 		/// <summary>
-		///  When true, ThreadLoop posts WM_CORONA_RENDER on every VSYNC tick
-		///  regardless of whether a logic step is due, syncing the render rate
-		///  to the monitor refresh rate. When false (default), only WM_CORONA_TIMER
-		///  is posted — render runs at the same rate as logic.
+		///  When true (default), ThreadLoop posts WM_CORONA_RENDER on every VSYNC
+		///  tick where no logic step is due, syncing the render rate to the monitor
+		///  refresh rate for smooth high-refresh rendering.
+		///  When false, only WM_CORONA_TIMER is posted — render runs at the same
+		///  rate as logic. Can be changed at runtime via display.setRenderSync().
 		/// </summary>
 		bool fFrameSync;
 
@@ -266,6 +261,15 @@ namespace Rtt
 		///  </para>
 		/// </summary>
 		std::atomic<bool> fTickPending;
+
+		/// <summary>
+		///  Atomic flag used to gate WM_CORONA_RENDER delivery between the background
+		///  thread and the main thread. Independent of fTickPending so that a slow
+		///  render-only tick cannot block a logic tick from firing on time.
+		///  Set to true by ThreadLoop() before posting WM_CORONA_RENDER.
+		///  Cleared back to false by Evaluate() after the render-only dispatch.
+		/// </summary>
+		std::atomic<bool> fRenderPending;
 
 		/// <summary>
 		///  Stores the message ID (WM_CORONA_TIMER or WM_CORONA_RENDER) of the

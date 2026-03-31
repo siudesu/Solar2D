@@ -49,8 +49,9 @@ namespace Rtt
 		fIntervalInMilliseconds(10),
 		fNextIntervalTimeInTicks(0),
 		fTickPending(false),
+		fRenderPending(false),
 		fLastMessage(0),
-		fFrameSync(false)
+		fFrameSync(true)
 	{
 		// Determine if DWM composition is available and enabled on this system.
 		// If so, we use a display-sync background thread (fUseDwmThread = true)
@@ -214,22 +215,20 @@ namespace Rtt
 			//   context. This keeps the display refreshing at monitor rate even
 			//   when logic runs at a lower rate (e.g. 60fps logic on 120Hz display).
 			//
-			// fTickPending is cleared AFTER dispatch so the background thread can
-			// post the next message as soon as the main thread is free. Clearing
-			// before dispatch would allow a new message to be posted while the
-			// callback is still executing, potentially re-introducing queue pressure
-			// under heavy load.
+			// Each message type has its own pending flag so a slow render-only tick
+			// cannot block a logic tick from firing on time.
 			if (fLastMessage == WM_CORONA_TIMER)
 			{
-				// Full tick — run logic step then render.
 				this->operator()();
+				fTickPending.store(false);
 			}
 			else
 			{
-				// Queue a WM_PAINT — OnPaint() handles render with proper GL context.
+				// Render-only tick — queue a WM_PAINT so OnPaint() redraws the
+				// last frame with the correct GL context.
 				::InvalidateRect(fWindowHandle, nullptr, FALSE);
+				fRenderPending.store(false);
 			}
-			fTickPending.store(false);
 		}
 		else
 		{
@@ -353,27 +352,24 @@ namespace Rtt
 			// the queue under heavy load, which would starve input messages and
 			// make the window unresponsive. The timing loop continues advancing
 			// nextTick regardless, so no drift builds up when a tick is skipped.
-			bool expected = false;
-			if (fTickPending.compare_exchange_strong(expected, true))
+			if (doStep)
 			{
-				if (doStep)
+				// Logic tick due — gate independently from render ticks so a slow
+				// render-only tick cannot block a logic tick from firing on time.
+				bool expected = false;
+				if (fTickPending.compare_exchange_strong(expected, true))
 				{
-					// Logic tick due — post full update + render message.
 					::PostMessage(fWindowHandle, WM_CORONA_TIMER, (WPARAM)fTimerID, 0);
 				}
-				else if (fFrameSync)
+			}
+			else if (fFrameSync)
+			{
+				// Render-only tick — gated independently from logic ticks.
+				// Only posted when frameSync is enabled.
+				bool expected = false;
+				if (fRenderPending.compare_exchange_strong(expected, true))
 				{
-					// Render-only tick — only posted when frameSync is enabled.
-					// When disabled (default), render runs at the same rate as
-					// logic and no duplicate frames are produced.
 					::PostMessage(fWindowHandle, WM_CORONA_RENDER, (WPARAM)fTimerID, 0);
-				}
-				else
-				{
-					// frameSync disabled — release the gate immediately so the
-					// next logic tick is not blocked waiting for a render-only
-					// message that was never posted.
-					fTickPending.store(false);
 				}
 			}
 
