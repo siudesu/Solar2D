@@ -906,13 +906,16 @@ Runtime::ReadConfig( lua_State *L )
 	lua_getfield(L, -1, "fps");
 	int fps = (int)lua_tointeger(L, -1);
 #ifdef Rtt_WIN_ENV
-	if (60 == fps || 120 == fps)  // Besides default (30), 60 and 120 fps are supported on Windows
+	// Any positive integer fps value is accepted on Windows.
+	// The runtime will cap to the monitor refresh rate in BeginRunLoop()
+	// if the configured value exceeds it.
+	if (fps > 0)
 #else
 	if (60 == fps)                // Besides default (30), only 60 fps is supported on other platforms
 #endif
 	{
 		Rtt_ASSERT(!IsProperty(kIsApplicationLoaded));
-		fFPS = fps;
+		fFPS = (U8)fps;
 	}
 	lua_pop(L, 1);
 
@@ -1391,27 +1394,18 @@ Runtime::WindowSizeChanged()
 void
 Runtime::BeginRunLoop()
 {
-	// Cap configured fps to the display refresh rate if it exceeds it.
-	// Only applies downward — a configured fps lower than the refresh rate
-	// (e.g. 30fps on a 120Hz monitor) is always respected as-is.
 	double refreshRate = fTimer->GetRefreshRate();
-	if (refreshRate > 0.0 && fFPS > (U8)refreshRate)
+
+	// Calculate the effective fps — cap to monitor refresh rate if exceeded.
+	// fFPS is never modified so display.fps always reflects config.lua.
+	U32 kFps = fFPS;
+	if (refreshRate > 0.0 && kFps > (U8)refreshRate)
 	{
 		Rtt_LogException("WARNING: config.lua fps (%d) exceeds display refresh rate (%.0fHz). Capping to %.0ffps.\n",
-			fFPS, refreshRate, refreshRate);
-		fFPS = (U8)refreshRate;
+			kFps, refreshRate, refreshRate);
+		kFps = (U8)refreshRate;
 	}
 
-
-	// Pass frameSync setting to the timer so ThreadLoop knows
-	// whether to post render-only VSYNC ticks.
-	// When false (default), render runs at the same rate as logic.
-	// When true, render syncs to monitor refresh rate — useful when
-	// engine-side interpolation is available or for developers who
-	// explicitly want VSYNC-rate rendering.
-	fTimer->SetFrameSync(IsProperty(kFrameSync));
-
-	const U32 kFps = fFPS;
 	const U32 kInterval = 1000 / kFps;
 
 	fPhysicsWorld->Initialize( GetFrameInterval() );
@@ -1989,7 +1983,7 @@ Runtime::Step()
 	// Advance the simulation by one fixed logic tick.
 	// Runs the scheduler, dispatches enterFrame to Lua, updates physics and
 	// display object state. Does NOT render — rendering is handled separately
-	// by Render() which fires at the monitor refresh rate via WM_CORONA_RENDER.
+	// by Render() which fires at the monitor refresh rate via WM_PAINT.
 	RuntimeGuard guard( * this );
 
 	if ( ! Rtt_VERIFY( fDisplay ) )

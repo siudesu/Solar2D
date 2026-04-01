@@ -18,13 +18,14 @@
 
 
 /// <summary>
-///  Custom window messages posted from the display-sync thread to the main thread.
+///  Custom window message posted from the display-sync thread to the main thread.
 ///  WM_CORONA_TIMER triggers a full logic + render tick (Step + Render).
-///  WM_CORONA_RENDER triggers a render-only tick, fired every VSYNC when no logic step is due.
-///  Both are gated by fTickPending to prevent queue flooding under load.
+///  Gated by fTickPending to prevent queue flooding under load.
+///  Render-only ticks (vsync with no logic due) are handled via InvalidateRect
+///  called directly from the thread, which coalesces into a low-priority WM_PAINT
+///  that Windows only delivers when the queue is otherwise idle.
 /// </summary>
-#define WM_CORONA_TIMER		(WM_USER + 0x100)
-#define WM_CORONA_RENDER	(WM_USER + 0x101)
+#define WM_CORONA_TIMER (WM_USER + 0x100)
 
 namespace Rtt
 {
@@ -60,21 +61,15 @@ namespace Rtt
 		virtual bool IsRunning() const override;
 
 		/// <summary>
-		///  <para>Checks the last message type and dispatches accordingly.</para>
+		///  <para>Dispatches a logic + render tick when called from the WM_CORONA_TIMER handler.</para>
 		///  <para>
-		///   In the display-sync path, if the last message was WM_CORONA_TIMER,
-		///   both Step() and Render() are invoked — a full logic + render tick.
-		///   If the last message was WM_CORONA_RENDER, only Render() is invoked —
-		///   the display refreshes without advancing game logic.
+		///   In the display-sync path, invokes the full Step() + Render() callback via operator()(),
+		///   then clears fTickPending so the background thread can post the next tick.
 		///  </para>
 		///  <para>
 		///   In the legacy WM_TIMER path, the tick count is checked manually to
 		///   determine if the configured interval has elapsed before invoking
 		///   the full callback.
-		///  </para>
-		///  <para>
-		///   Clears fTickPending after dispatch so the background thread can
-		///   post the next message as soon as the main thread is free.
 		///  </para>
 		///  <para>This method will not do anything if the timer is not running.</para>
 		/// </summary>
@@ -105,10 +100,10 @@ namespace Rtt
 		/// <summary>
 		///  <para>Enables or disables render-sync mode at runtime.</para>
 		///  <para>
-		///   When enabled, ThreadLoop posts WM_CORONA_RENDER on every VSYNC tick
-		///   where no logic step is due, syncing the render rate to the monitor.
-		///   When disabled, only WM_CORONA_TIMER is posted and render runs at
-		///   the logic rate set by config.lua fps.
+		///   When enabled, ThreadLoop calls InvalidateRect on every vsync tick where
+		///   no logic step is due, keeping the display refreshing at monitor rate even
+		///   when logic runs at a lower rate (e.g. 60fps logic on a 120Hz display).
+		///   When disabled, the display refreshes only when a logic tick fires.
 		///  </para>
 		///  <para>Can be called at any time, including while the timer is running.</para>
 		/// </summary>
@@ -117,9 +112,7 @@ namespace Rtt
 	private:
 		/// <summary>
 		///  <para>Static entry point for the display-sync background thread.</para>
-		///  <para>
-		///   Delegates immediately to ThreadLoop() on the WinTimer instance passed via lpParam.
-		///  </para>
+		///  <para>Delegates immediately to ThreadLoop() on the WinTimer instance passed via lpParam.</para>
 		/// </summary>
 		static DWORD WINAPI TimerThreadProc(LPVOID lpParam);
 
@@ -131,23 +124,24 @@ namespace Rtt
 		///   using a high-resolution sleep/spin strategy seeded by the actual display refresh rate.
 		///  </para>
 		///  <para>
-		///   Each VSYNC tick posts either WM_CORONA_TIMER (logic + render due) or
-		///   WM_CORONA_RENDER (render only) depending on whether the logic accumulator
-		///   has reached the configured frame interval. This decouples the logic update
-		///   rate (config.lua fps) from the render rate (monitor refresh rate).
+		///   On each vsync tick, if a logic update is due, WM_CORONA_TIMER is posted to the main
+		///   thread for a full Step() + Render(). If only a visual refresh is needed,
+		///   InvalidateRect is called directly — this coalesces into a single low-priority
+		///   WM_PAINT that Windows delivers only when the queue is otherwise idle, ensuring
+		///   render-only ticks never starve input, timers, or other real messages.
 		///  </para>
 		///  <para>
 		///   This approach is conceptually equivalent to requestAnimationFrame in browsers —
 		///   the callback fires once per display refresh cycle, phase-locked to the monitor.
-		///   A 60fps game on a 120Hz or 144Hz monitor fires every Nth refresh tick, ensuring
-		///   frames always land on a display boundary rather than between refreshes.
+		///   A 60fps project on a 120Hz or 144Hz display fires a logic tick every Nth refresh,
+		///   ensuring frames always land on a display boundary rather than between refreshes.
 		///  </para>
 		///  <para>
 		///   To preserve input responsiveness under heavy load, the loop uses fTickPending
-		///   as a one-message gate. A new message is only posted after the previous one has
-		///   been fully processed by the main thread (i.e. after Evaluate() clears fTickPending).
-		///   When frameSync is disabled and no logic tick is due, the gate is released immediately
-		///   without posting — render runs at logic rate with no duplicate frames.
+		///   as a one-message gate. A new WM_CORONA_TIMER is only posted after the previous
+		///   one has been fully processed by the main thread (i.e. after Evaluate() clears
+		///   fTickPending). This prevents the queue from accumulating logic ticks when the
+		///   main thread is busy, which would otherwise starve input messages.
 		///  </para>
 		/// </summary>
 		void ThreadLoop();
@@ -166,8 +160,8 @@ namespace Rtt
 		///   large positive numbers.
 		///  </para>
 		/// </summary>
-		/// <param name="x">Ticks value to be compared against argument "y".</para>
-		/// <param name="y">Ticks value to be compared against argument "x".</para>
+		/// <param name="x">Ticks value to be compared against argument "y".</param>
+		/// <param name="y">Ticks value to be compared against argument "x".</param>
 		/// <returns>
 		///  <para>Returns a positive value if "x" is greater than "y".</para>
 		///  <para>Returns zero if "x" is equal to "y".</para>
@@ -210,11 +204,10 @@ namespace Rtt
 		S32 fNextIntervalTimeInTicks;
 
 		/// <summary>
-		///  When true (default), ThreadLoop posts WM_CORONA_RENDER on every VSYNC
-		///  tick where no logic step is due, syncing the render rate to the monitor
-		///  refresh rate for smooth high-refresh rendering.
-		///  When false, only WM_CORONA_TIMER is posted — render runs at the same
-		///  rate as logic. Can be changed at runtime via display.setRenderSync().
+		///  When true (default), ThreadLoop calls InvalidateRect on every vsync tick
+		///  where no logic step is due, keeping the display refreshing at monitor rate.
+		///  When false, the display refreshes only when a logic tick fires.
+		///  Can be changed at runtime via display.setFrameSync().
 		/// </summary>
 		bool fFrameSync;
 
@@ -238,46 +231,16 @@ namespace Rtt
 
 		/// <summary>
 		///  Atomic flag used to gate WM_CORONA_TIMER delivery between the background
-		///  thread and the main thread.
-		///  <para>
-		///   Set to true by ThreadLoop() immediately before posting either
-		///   WM_CORONA_TIMER or WM_CORONA_RENDER. Cleared back to false by
-		///   Evaluate() after dispatch is complete.
-		///  </para>
-		///  <para>
-		///   This prevents the message queue from accumulating timer ticks when the
-		///   main thread is busy (e.g. under heavy physics load), which would otherwise
-		///   starve input messages and make the window unresponsive — a regression from
-		///   the legacy WM_TIMER behavior where Windows naturally withheld timer messages
-		///   until the message queue was idle.
-		///  </para>
-		///  <para>
-		///   Declared public so RuntimeEnvironment::RuntimeDelegate::DidResume() can
-		///   reset it after every runtime resume. The reset must live in DidResume()
-		///   rather than RuntimeEnvironment::Resume() because the Simulator calls
-		///   Rtt::Runtime::Resume() directly via GetRuntime(), bypassing
-		///   RuntimeEnvironment::Resume() entirely. DidResume() is the only reliable
-		///   hook point that fires after every resume regardless of call path.
-		///  </para>
+		///  thread and the main thread. Prevents the message queue from accumulating
+		///  logic ticks when the main thread is busy.
+		///  Declared public so RuntimeEnvironment::RuntimeDelegate::DidResume() can
+		///  reset it after every runtime resume. The reset must live in DidResume()
+		///  rather than RuntimeEnvironment::Resume() because the Simulator calls
+		///  Rtt::Runtime::Resume() directly via GetRuntime(), bypassing
+		///  RuntimeEnvironment::Resume() entirely. DidResume() is the only reliable
+		///  hook point that fires after every resume regardless of call path.
 		/// </summary>
 		std::atomic<bool> fTickPending;
-
-		/// <summary>
-		///  Atomic flag used to gate WM_CORONA_RENDER delivery between the background
-		///  thread and the main thread. Independent of fTickPending so that a slow
-		///  render-only tick cannot block a logic tick from firing on time.
-		///  Set to true by ThreadLoop() before posting WM_CORONA_RENDER.
-		///  Cleared back to false by Evaluate() after the render-only dispatch.
-		/// </summary>
-		std::atomic<bool> fRenderPending;
-
-		/// <summary>
-		///  Stores the message ID (WM_CORONA_TIMER or WM_CORONA_RENDER) of the
-		///  most recently received display-sync message. Set by RenderSurfaceControl
-		///  before calling Evaluate() so the dispatch branch knows whether to run
-		///  a full logic + render tick or a render-only tick.
-		/// </summary>
-		UINT fLastMessage;
 	};
 
 }	// namespace Rtt

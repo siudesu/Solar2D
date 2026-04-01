@@ -49,8 +49,6 @@ namespace Rtt
 		fIntervalInMilliseconds(10),
 		fNextIntervalTimeInTicks(0),
 		fTickPending(false),
-		fRenderPending(false),
-		fLastMessage(0),
 		fFrameSync(true)
 	{
 		// Determine if DWM composition is available and enabled on this system.
@@ -168,6 +166,21 @@ namespace Rtt
 				fStopEvent = nullptr;
 			}
 
+			// Drain any WM_CORONA_TIMER messages the thread posted just before
+			// exiting. fWindowHandle is still valid here — DestroyWindow hasn't
+			// been called yet. Safe to call with fTimerID == 0 because
+			// PeekMessage filters by HWND only, not wParam.
+			if (fWindowHandle)
+			{
+				MSG msg;
+				while (::PeekMessage(&msg, fWindowHandle,
+					WM_CORONA_TIMER, WM_CORONA_TIMER, PM_REMOVE))
+				{
+				}
+			}
+
+			fTickPending.store(false);
+
 			// Restore the system timer resolution we raised in Start().
 			::timeEndPeriod(1);
 		}
@@ -205,30 +218,12 @@ namespace Rtt
 
 		if (fUseDwmThread)
 		{
-			// Display-sync path: fLastMessage tells us what ThreadLoop posted.
-			//
-			// WM_CORONA_TIMER — logic tick is due. Run the full Step() + Render()
-			//   via operator()() which acts as a shim for both.
-			//
-			// WM_CORONA_RENDER — VSYNC fired but no logic tick is due. Queue a
-			//   WM_PAINT so OnPaint() redraws the last frame with the correct GL
-			//   context. This keeps the display refreshing at monitor rate even
-			//   when logic runs at a lower rate (e.g. 60fps logic on 120Hz display).
-			//
-			// Each message type has its own pending flag so a slow render-only tick
-			// cannot block a logic tick from firing on time.
-			if (fLastMessage == WM_CORONA_TIMER)
-			{
-				this->operator()();
-				fTickPending.store(false);
-			}
-			else
-			{
-				// Render-only tick — queue a WM_PAINT so OnPaint() redraws the
-				// last frame with the correct GL context.
-				::InvalidateRect(fWindowHandle, nullptr, FALSE);
-				fRenderPending.store(false);
-			}
+			// Display-sync path: run the full Step() + Render() callback,
+			// then clear fTickPending so the background thread can post the next tick.
+			// Render-only ticks (vsync with no logic due) are handled separately via
+			// InvalidateRect in ThreadLoop — they never reach Evaluate().
+			this->operator()();
+			fTickPending.store(false);
 		}
 		else
 		{
@@ -271,22 +266,15 @@ namespace Rtt
 		LARGE_INTEGER freq, now;
 		::QueryPerformanceFrequency(&freq);
 
-		// Query the monitor refresh rate to use as the base tick interval.
-		// On a 120Hz monitor this gives 8.33ms per tick. On 60Hz, 16.67ms.
-		// The game's configured FPS (e.g. 60fps on a 120Hz monitor) is enforced
-		// separately via the accumulator below — frames fire every Nth display tick.
 		double refreshRate = GetRefreshRate();
 		double targetFrameTime = 1.0 / refreshRate;
-
-		// The Corona runtime's configured frame interval in seconds (e.g. 1/60 = 0.01667s).
-		// Set externally via SetInterval() based on the fps value in config.lua.
 		double intervalSeconds = static_cast<double>(fIntervalInMilliseconds) / 1000.0;
 
 		LARGE_INTEGER start;
 		::QueryPerformanceCounter(&start);
 
 		double nextTick = 0.0;
-		double accumulator = 0.0;
+		double nextLogicTick = intervalSeconds;
 
 		while (fRunning)
 		{
@@ -295,10 +283,6 @@ namespace Rtt
 			double delta = currentTime - nextTick;
 
 			// ---- SLEEP PHASE ----
-			// If we are more than 1ms away from the next tick deadline, sleep for
-			// most of the remaining time. We leave 1ms unslept as a buffer to
-			// account for Sleep() waking up slightly late on a loaded system.
-			// This keeps CPU usage low for the majority of each frame interval.
 			if (delta < -0.001)
 			{
 				DWORD sleepMs = (DWORD)((-delta - 0.001) * 1000.0);
@@ -307,12 +291,7 @@ namespace Rtt
 				continue;
 			}
 
-			// ---- SPIN PHASE (last ~1ms before deadline) ----
-			// Busy-wait with YieldProcessor() for sub-millisecond precision.
-			// YieldProcessor emits a CPU pause instruction (PAUSE on x86) which
-			// hints to the CPU that we are in a spin-wait loop, reducing power
-			// consumption and improving performance of the surrounding pipeline
-			// compared to a plain empty loop.
+			// ---- SPIN PHASE ----
 			while (true)
 			{
 				::QueryPerformanceCounter(&now);
@@ -323,59 +302,31 @@ namespace Rtt
 			}
 
 			// ---- FIRE ----
-			// Accumulate elapsed display ticks. Each VSYNC tick posts either
-			// WM_CORONA_TIMER (logic + render) or WM_CORONA_RENDER (render only)
-			// depending on whether the logic accumulator has reached the configured
-			// frame interval. This decouples logic rate (config.lua fps) from
-			// render rate (monitor refresh rate).
-			accumulator += targetFrameTime;
-			bool doStep = (accumulator >= intervalSeconds);
-			if (doStep)
-			{
-				// Reset the accumulator to zero rather than carrying over the remainder.
-				// Carrying over causes occasional early ticks — for example, on a 120Hz
-				// monitor running a 60fps game, carry-over produces a frame every ~13
-				// normal frames that arrives after only 8.3ms instead of 16.7ms. Although
-				// framedebug does not flag these as stutters, they are displayed for only
-				// one refresh cycle instead of two, creating subtle but perceptible judder
-				// during smooth scrolling and camera movement.
-				// Resetting to zero eliminates these early ticks entirely, producing a
-				// consistent 16.67ms frame interval, ~1ms jitter, and a stable 60.0fps
-				// readout. The tradeoff is a negligible long-term drift of a fraction of
-				// a millisecond per session, which is completely imperceptible.
-				accumulator = 0.0;
-			}
 
-			// Only post if the previous WM_CORONA_TIMER has been fully processed
-			// by the main thread (i.e. Evaluate() has cleared fTickPending).
-			// This one-message gate prevents timer messages from accumulating in
-			// the queue under heavy load, which would starve input messages and
-			// make the window unresponsive. The timing loop continues advancing
-			// nextTick regardless, so no drift builds up when a tick is skipped.
+			// Logic tick — wall-clock driven, independent of vsync.
+			// Fires at intervalSeconds regardless of refresh rate.
+			bool doStep = (currentTime >= nextLogicTick);
 			if (doStep)
 			{
-				// Logic tick due — gate independently from render ticks so a slow
-				// render-only tick cannot block a logic tick from firing on time.
+				nextLogicTick += intervalSeconds;
+
 				bool expected = false;
 				if (fTickPending.compare_exchange_strong(expected, true))
-				{
 					::PostMessage(fWindowHandle, WM_CORONA_TIMER, (WPARAM)fTimerID, 0);
-				}
-			}
-			else if (fFrameSync)
-			{
-				// Render-only tick — gated independently from logic ticks.
-				// Only posted when frameSync is enabled.
-				bool expected = false;
-				if (fRenderPending.compare_exchange_strong(expected, true))
-				{
-					::PostMessage(fWindowHandle, WM_CORONA_RENDER, (WPARAM)fTimerID, 0);
-				}
 			}
 
-			// Advance the deadline by exactly one display refresh interval.
-			// Using addition rather than re-querying the clock prevents timing
-			// drift from accumulating over many frames.
+			// Render-only tick — call InvalidateRect directly from the thread.
+			// This is thread-safe, coalescing (multiple calls before the next
+			// paint are merged into one WM_PAINT), and WM_PAINT is a low-priority
+			// synthesized message that Windows only delivers when the queue is
+			// otherwise empty. This means render-only ticks can never starve
+			// WM_TIMER, input messages, or anything else in the queue.
+			if (fFrameSync && !doStep)
+			{
+				::InvalidateRect(fWindowHandle, nullptr, FALSE);
+			}
+
+			// Advance vsync deadline by exactly one display interval.
 			nextTick += targetFrameTime;
 		}
 	}

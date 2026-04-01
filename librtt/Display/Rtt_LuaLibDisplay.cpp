@@ -385,9 +385,10 @@ DisplayLibrary::ValueForKey( lua_State *L )
         "safeActualContentWidth", //24
         "safeActualContentHeight", //25
         "refreshRate", // 26
+        "actualFps", // 27
     };
     
-    static StringHash sHash( *LuaContext::GetAllocator( L ), keys, sizeof( keys ) / sizeof(const char *), 27, 27, 17, __FILE__, __LINE__ );
+    static StringHash sHash( *LuaContext::GetAllocator( L ), keys, sizeof( keys ) / sizeof(const char *), 28, 28, 17, __FILE__, __LINE__ );
     StringHash *hash = &sHash;
 
     int index = hash->Lookup( key );
@@ -566,6 +567,26 @@ DisplayLibrary::ValueForKey( lua_State *L )
             // display.refreshRate is not supported on this platform.
             // Returns nil to allow developers to detect availability.
             lua_pushnil(L);
+    #endif
+            break;
+        }
+    case 27:    // "actualFps"
+        {
+            // Returns the actual logic rate the engine is running at.
+            // On Windows, this may differ from display.fps if the configured
+            // value exceeds the monitor refresh rate.
+            // On other platforms, returns the same value as display.fps.
+            Runtime& runtime = *LuaContext::GetRuntime(L);
+            U8 configuredFps = runtime.GetFPS();
+    #ifdef Rtt_WIN_ENV
+            double refreshRate = runtime.GetTimer()->GetRefreshRate();
+            U8 actualFps = (refreshRate > 0.0 && configuredFps > (U8)refreshRate)
+                ? (U8)refreshRate
+                : configuredFps;
+            lua_pushinteger(L, actualFps);
+    #else
+            // Non-Windows platforms don't cap fps - actual equals configured.
+            lua_pushinteger(L, configuredFps);
     #endif
             break;
         }
