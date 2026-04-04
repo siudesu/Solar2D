@@ -303,8 +303,8 @@ namespace Rtt
 
 			// ---- FIRE ----
 
-			// Logic tick — wall-clock driven, independent of vsync.
-			// Fires at intervalSeconds regardless of refresh rate.
+						// Logic tick — wall-clock driven, independent of vsync.
+						// Fires at intervalSeconds regardless of refresh rate.
 			bool doStep = (currentTime >= nextLogicTick);
 			if (doStep)
 			{
@@ -312,7 +312,16 @@ namespace Rtt
 
 				bool expected = false;
 				if (fTickPending.compare_exchange_strong(expected, true))
-					::PostMessage(fWindowHandle, WM_CORONA_TIMER, (WPARAM)fTimerID, 0);
+				{
+					// Guard against the window being destroyed between the time
+					// fRunning was set to false and the thread's final iteration.
+					// PostMessage on an invalid HWND is a no-op but leaves
+					// fTickPending stuck at true, so reset it explicitly.
+					if (::IsWindow(fWindowHandle))
+						::PostMessage(fWindowHandle, WM_CORONA_TIMER, (WPARAM)fTimerID, 0);
+					else
+						fTickPending.store(false);
+				}
 			}
 
 			// Render-only tick — call InvalidateRect directly from the thread.
@@ -321,7 +330,11 @@ namespace Rtt
 			// synthesized message that Windows only delivers when the queue is
 			// otherwise empty. This means render-only ticks can never starve
 			// WM_TIMER, input messages, or anything else in the queue.
-			if (fFrameSync && !doStep)
+			// IsWindow() guards against the window being destroyed during the
+			// brief window between Stop() setting fRunning=false and the thread
+			// fully exiting — InvalidateRect on a destroyed HWND can corrupt
+			// Win32 window state and cause the Simulator to steal foreground focus.
+			if (fFrameSync && !doStep && ::IsWindow(fWindowHandle))
 			{
 				::InvalidateRect(fWindowHandle, nullptr, FALSE);
 			}
