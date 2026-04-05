@@ -98,6 +98,16 @@ namespace Rtt
 		double GetRefreshRate() const override;
 
 		/// <summary>
+		///  <para>Returns whether render-sync mode is currently enabled.</para>
+		///  <para>
+		///   When true, ThreadLoop calls InvalidateRect on every vsync tick where
+		///   no logic step is due, keeping the display refreshing at monitor rate.
+		///   When false, the display refreshes only when a logic tick fires.
+		///  </para>
+		/// </summary>
+		virtual bool GetFrameSync() const override;
+
+		/// <summary>
 		///  <para>Enables or disables render-sync mode at runtime.</para>
 		///  <para>
 		///   When enabled, ThreadLoop calls InvalidateRect on every vsync tick where
@@ -207,7 +217,7 @@ namespace Rtt
 		///  When true (default), ThreadLoop calls InvalidateRect on every vsync tick
 		///  where no logic step is due, keeping the display refreshing at monitor rate.
 		///  When false, the display refreshes only when a logic tick fires.
-		///  Can be changed at runtime via display.setFrameSync().
+		///  Can be changed at runtime via display.setDefault("renderSync", bool).
 		/// </summary>
 		bool fFrameSync;
 

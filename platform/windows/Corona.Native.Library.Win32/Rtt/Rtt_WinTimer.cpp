@@ -245,8 +245,17 @@ namespace Rtt
 		}
 	}
 
+	bool WinTimer::GetFrameSync() const
+	{
+		// Returns whether render-only vsync ticks are enabled.
+		// Readable via display.getDefault("renderSync").
+		return fFrameSync;
+	}
+
 	void WinTimer::SetFrameSync(bool enabled)
 	{
+		// Enables or disables render-only vsync ticks at runtime.
+		// Settable via display.setDefault("renderSync", bool).
 		fFrameSync = enabled;
 	}
 

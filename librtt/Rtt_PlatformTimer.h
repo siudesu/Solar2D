@@ -49,17 +49,28 @@ class PlatformTimer
 		virtual double GetRefreshRate() const { return 0.0; }
 
 		/// <summary>
-		///  <para>Controls whether the render loop syncs to the monitor refresh rate.</para>
+		///  Returns whether render-sync mode is enabled.
+		///  When true, the display invalidates every vsync tick even when no
+		///  logic tick has fired, syncing redraws to the monitor refresh rate.
+		///  Always returns false on non-Windows platforms.
+		/// </summary>
+		virtual bool GetFrameSync() const { return false; }
+
+		/// <summary>
+		///  <para>Enables or disables render-sync mode.</para>
 		///  <para>
-		///   When false (default), render runs at the same rate as logic (config.lua fps)
-		///   and no duplicate frames are produced.
+		///   When true, the render loop calls InvalidateRect on every vsync tick
+		///   where no logic step is due, keeping the display refreshing at monitor
+		///   rate even when logic runs at a lower rate (e.g. 60fps on a 120Hz display).
+		///   This reduces compositor jitter at the cost of ~1W additional GPU power draw.
 		///  </para>
 		///  <para>
-		///   When true, render posts VSYNC-rate ticks independent of the logic rate.
-		///   Without engine-side interpolation, render-only frames are redraws of the
-		///   same state — this is groundwork for a future interpolation feature.
+		///   When false, the display redraws only when a logic tick fires.
 		///  </para>
-		///  <para>Overridden by platform-specific subclasses (e.g. WinTimer).</para>
+		///  <para>
+		///   Defaults to true on Windows. No-op on non-Windows platforms.
+		///   Can be changed at runtime via display.setDefault("renderSync", bool).
+		///  </para>
 		/// </summary>
 		virtual void SetFrameSync(bool enabled) {}
 	
