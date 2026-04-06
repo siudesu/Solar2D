@@ -1408,7 +1408,14 @@ Runtime::BeginRunLoop()
 
 	const U32 kInterval = 1000 / kFps;
 
-	fPhysicsWorld->Initialize( GetFrameInterval() );
+#ifdef Rtt_WIN_ENV
+	// On Windows, kFps may differ from fFPS if the monitor refresh rate cap
+	// was applied. Physics must be initialized at the effective tick rate or
+	// simulation speed will be incorrect when the cap fires.
+	fPhysicsWorld->Initialize(1.f / (float)kFps);
+#else
+	fPhysicsWorld->Initialize(GetFrameInterval());
+#endif
 
 	fDisplay->SetDelegate( this );
 	fDisplay->Start();
