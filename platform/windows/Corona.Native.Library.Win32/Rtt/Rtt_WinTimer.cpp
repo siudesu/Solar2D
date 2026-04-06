@@ -285,6 +285,11 @@ namespace Rtt
 		double nextTick = 0.0;
 		double nextLogicTick = intervalSeconds;
 
+		// Counter for periodic refresh rate checks. Declared outside the loop
+		// so it resets cleanly on each ThreadLoop() invocation rather than
+		// persisting across timer restarts as a static would.
+		int refreshCheckCounter = 0;
+
 		while (fRunning)
 		{
 			::QueryPerformanceCounter(&now);
@@ -312,8 +317,8 @@ namespace Rtt
 
 			// ---- FIRE ----
 
-						// Logic tick — wall-clock driven, independent of vsync.
-						// Fires at intervalSeconds regardless of refresh rate.
+			// Logic tick — wall-clock driven, independent of vsync.
+			// Fires at intervalSeconds regardless of refresh rate.
 			bool doStep = (currentTime >= nextLogicTick);
 			if (doStep)
 			{
@@ -346,6 +351,29 @@ namespace Rtt
 			if (fFrameSync && !doStep && ::IsWindow(fWindowHandle))
 			{
 				::InvalidateRect(fWindowHandle, nullptr, FALSE);
+			}
+
+			// ---- MONITOR CHANGE CHECK ----
+			// Re-query the refresh rate every 60 ticks (~0.5s at 120Hz) to detect
+			// when the window has been moved to a monitor with a different refresh
+			// rate. GetRefreshRate() queries DXGI which is not free, so we avoid
+			// calling it every frame. A ~0.5s detection window shoule be responsive enough.
+			if (++refreshCheckCounter >= 60)
+			{
+				refreshCheckCounter = 0;
+				double newRefreshRate = GetRefreshRate();
+				if (fabs(newRefreshRate - refreshRate) > 1.0)
+				{
+					refreshRate = newRefreshRate;
+					targetFrameTime = 1.0 / refreshRate;
+
+					// Reset the vsync deadline to the current time so the new
+					// cadence starts cleanly without carrying over accumulated
+					// delta from the old refresh rate.
+					::QueryPerformanceCounter(&now);
+					currentTime = (double)(now.QuadPart - start.QuadPart) / freq.QuadPart;
+					nextTick = currentTime;
+				}
 			}
 
 			// Advance vsync deadline by exactly one display interval.
