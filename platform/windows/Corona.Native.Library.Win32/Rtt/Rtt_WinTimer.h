@@ -26,6 +26,7 @@
 ///  that Windows only delivers when the queue is otherwise idle.
 /// </summary>
 #define WM_CORONA_TIMER (WM_USER + 0x100)
+#define WM_CORONA_MONITOR_CHANGED (WM_USER + 0x101)
 
 namespace Rtt
 {
@@ -210,7 +211,7 @@ namespace Rtt
 		// Legacy WM_TIMER fallback members — only used when fUseDwmThread is false.
 		UINT_PTR fTimerPointer;
 		UINT_PTR fTimerID;
-		U32 fIntervalInMilliseconds;
+		std::atomic<U32> fIntervalInMilliseconds;
 		S32 fNextIntervalTimeInTicks;
 
 		/// <summary>

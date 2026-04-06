@@ -316,6 +316,9 @@ namespace Rtt
 			}
 
 			// ---- FIRE ----
+			// Always re-read interval in case SetInterval() was called externally
+			// (e.g. after a monitor change updates the effective fps cap).
+			intervalSeconds = static_cast<double>(fIntervalInMilliseconds.load()) / 1000.0;
 
 			// Logic tick — wall-clock driven, independent of vsync.
 			// Fires at intervalSeconds regardless of refresh rate.
@@ -364,8 +367,13 @@ namespace Rtt
 				double newRefreshRate = GetRefreshRate();
 				if (fabs(newRefreshRate - refreshRate) > 1.0)
 				{
-					refreshRate = newRefreshRate;
+					refreshRate		= newRefreshRate;
 					targetFrameTime = 1.0 / refreshRate;
+
+					// Re-read the interval — SetInterval() may have been called
+					// by Runtime::OnMonitorChanged() on the main thread.
+					intervalSeconds = static_cast<double>(fIntervalInMilliseconds.load()) / 1000.0;
+
 
 					// Reset the vsync deadline to the current time so the new
 					// cadence starts cleanly without carrying over accumulated
@@ -373,6 +381,17 @@ namespace Rtt
 					::QueryPerformanceCounter(&now);
 					currentTime = (double)(now.QuadPart - start.QuadPart) / freq.QuadPart;
 					nextTick = currentTime;
+
+					if (nextLogicTick < currentTime)
+						nextLogicTick = currentTime + intervalSeconds;
+
+					// Notify the main thread. Encode Hz * 1000 as WPARAM for
+					// lossless integer transport (e.g. 59940 for 59.940 Hz).
+					if (::IsWindow(fWindowHandle))
+					{
+						::PostMessage(fWindowHandle, WM_CORONA_MONITOR_CHANGED,
+							(WPARAM)(UINT)(newRefreshRate * 1000.0), (LPARAM)fTimerID);
+					}
 				}
 			}
 

@@ -338,6 +338,7 @@ class Runtime : public MCallback,
 		virtual void operator()();
 #ifdef Rtt_WIN_ENV
 		void Step();    // advance logic one tick (scheduler, display update, frame counter)
+		void OnMonitorChanged(double newRefreshRate); // Re-derives effective fps and dispatches "monitorChanged" to Lua
 #endif
 		void Render();  // render current frame
 

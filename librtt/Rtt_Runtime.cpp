@@ -1391,6 +1391,28 @@ Runtime::WindowSizeChanged()
 	fDisplay->WindowSizeChanged();
 }
 
+#ifdef Rtt_WIN_ENV
+// Physics timestep is intentionally not updated here.
+// Developers may be running physics at a fixed rate independent of
+// the display refresh rate. The "monitorChanged" Lua event provides
+// event.actualFps so we can update physics.setTimeStep() as necessary.
+void Runtime::OnMonitorChanged(double newRefreshRate)
+{
+	if (newRefreshRate <= 0.0 || !IsProperty(kIsApplicationLoaded))
+		return;
+
+	U32 kFps = fFPS;
+	if (kFps > (U32)newRefreshRate)
+		kFps = (U32)newRefreshRate;
+
+	const U32 kInterval = 1000 / kFps;
+	fTimer->SetInterval(kInterval);
+
+	MonitorChangedEvent e(newRefreshRate, kFps);
+	DispatchEvent(e);
+}
+#endif
+
 void
 Runtime::BeginRunLoop()
 {

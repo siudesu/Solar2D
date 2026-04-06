@@ -35,6 +35,8 @@ RenderSurfaceControl::RenderSurfaceControl(HWND windowHandle, const Params & par
 	fRenderFrameEventHandlerPointer(nullptr),
 	fMainDeviceContextHandle(nullptr),
 	fRenderingContextHandle(nullptr),
+	fMonitorChangedEventHandlerPointer(nullptr),
+	fPendingMonitorRefreshRate(0),
 	fVulkanContext(nullptr)
 {
 	// Add event handlers.
@@ -70,6 +72,16 @@ RenderSurfaceControl::Version RenderSurfaceControl::GetRendererVersion() const
 void RenderSurfaceControl::SetRenderFrameHandler(RenderSurfaceControl::RenderFrameEvent::Handler *handlerPointer)
 {
 	fRenderFrameEventHandlerPointer = handlerPointer;
+}
+
+void RenderSurfaceControl::SetMonitorChangedHandler(MonitorChangedEvent::Handler* handlerPointer)
+{
+	fMonitorChangedEventHandlerPointer = handlerPointer;
+}
+
+double RenderSurfaceControl::GetPendingMonitorRefreshRate() const
+{
+	return (double)fPendingMonitorRefreshRate / 1000.0;
 }
 
 void RenderSurfaceControl::SelectRenderingContext()
@@ -508,6 +520,18 @@ void RenderSurfaceControl::OnReceivedMessage(UIComponent& sender, HandleMessageE
 			if (it != Rtt::WinTimer::sTimerMap.end())
 			{
 				it->second->Evaluate();
+			}
+			arguments.SetHandled();
+			arguments.SetReturnResult(0);
+			break;
+		}
+		case WM_CORONA_MONITOR_CHANGED:
+		{
+			fPendingMonitorRefreshRate = (UINT)arguments.GetWParam();
+			if (fMonitorChangedEventHandlerPointer)
+			{
+				HandledEventArgs eventArgs;
+				fMonitorChangedEventHandlerPointer->Invoke(*this, eventArgs);
 			}
 			arguments.SetHandled();
 			arguments.SetReturnResult(0);
