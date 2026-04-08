@@ -218,11 +218,32 @@ namespace Rtt
 
 		if (fUseDwmThread)
 		{
-			// Display-sync path: run the full Step() + Render() callback,
-			// then clear fTickPending so the background thread can post the next tick.
+			// Display-sync path: measure the wall-clock time spent executing the full
+			// frame tick. The measurement brackets operator()() which runs Step() +
+			// Render() — covering Lua logic, physics, scene traversal, command buffer
+			// preparation, and GL dispatch. This gives a complete picture of CPU frame
+			// work time as seen from the scheduling layer, independent of the idle time
+			// the background thread spends sleeping between ticks.
+			//
+			// QueryPerformanceFrequency() is called each time rather than cached because
+			// Evaluate() runs on the main thread and frequency queries are cheap (~1us).
+			// If this becomes a concern, freq can be cached as a member alongside
+			// fLastFrameWorkMs.
+			//
+			// fTickPending is cleared after the measurement so the result is fully
+			// committed before the background thread is allowed to post the next tick.
 			// Render-only ticks (vsync with no logic due) are handled separately via
-			// InvalidateRect in ThreadLoop — they never reach Evaluate().
+			// InvalidateRect in ThreadLoop and never reach Evaluate().
+			LARGE_INTEGER start, end, freq;
+			::QueryPerformanceFrequency(&freq);
+			::QueryPerformanceCounter(&start);
+
 			this->operator()();
+
+			::QueryPerformanceCounter(&end);
+			fLastFrameWorkMs.store(
+				(double)(end.QuadPart - start.QuadPart) / (double)freq.QuadPart * 1000.0
+			);
 			fTickPending.store(false);
 		}
 		else

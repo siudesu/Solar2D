@@ -74,6 +74,12 @@ class PlatformTimer
 		/// </summary>
 		virtual void SetFrameSync(bool enabled) {}
 	
+		// Returns the wall-clock time in milliseconds spent executing the most recent
+		// full frame tick, as measured at the scheduling layer. Covers Lua logic,
+		// physics, scene traversal, command buffer preparation, and GL dispatch.
+		// Returns 0.0 on platforms that do not implement this measurement.
+		virtual double GetLastFrameWorkMs() const { return 0.0; }
+
 	public:
 		// Allow manual invocation
 		Rtt_FORCE_INLINE void operator()() { fCallback(); }

@@ -3000,6 +3000,26 @@ DisplayLibrary::getStatistics( lua_State *L )
 		lua_setfield( L, 1, "textureBindCount" );
 		lua_pushinteger( L, stats.fTextureBindCount );
 		lua_setfield( L, 1, "textureBindCount" );
+#if defined( Rtt_WIN_ENV )
+        // On Windows, expose the total frame work time measured in WinTimer::Evaluate().
+        // This covers the full per-frame CPU cost: Lua logic, physics, scene traversal,
+        // command buffer preparation, and GL dispatch — everything operator()() executes.
+        // Unlike preparationTime and renderTimeCPU which only cover portions of the render
+        // path, this value reflects the complete frame budget usage as seen from the
+        // scheduling layer, making it suitable for "X.X / 16.6 ms" budget display.
+        // Only populated on the DWM display-sync path (fUseDwmThread == true).
+        {
+            Runtime* runtime = LuaContext::GetRuntime(L);
+            if (runtime)
+            {
+                // frameWorkTime reflects total per-frame CPU cost as measured at the
+                // scheduling layer — Lua logic, physics, scene traversal, and GL dispatch.
+                // Returns 0.0 on platforms that do not support this measurement.
+                lua_pushnumber(L, runtime->GetTimer()->GetLastFrameWorkMs());
+                lua_setfield(L, 1, "frameWorkTime");
+            }
+        }
+#endif
 	}
 
 	return 0;

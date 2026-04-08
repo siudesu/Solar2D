@@ -120,6 +120,13 @@ namespace Rtt
 		/// </summary>
 		virtual void SetFrameSync(bool enabled) override;
 
+		/// <summary>
+		///  <para>Returns the wall-clock time in milliseconds spent executing the most recent full frame tick.</para>
+		///  <para>See fLastFrameWorkMs for a full description of what this value covers.</para>
+		///  <para>Thread-safe — uses an atomic load internally.</para>
+		/// </summary>
+		virtual double GetLastFrameWorkMs() const override { return fLastFrameWorkMs.load(); }
+
 	private:
 		/// <summary>
 		///  <para>Static entry point for the display-sync background thread.</para>
@@ -221,6 +228,28 @@ namespace Rtt
 		///  Can be changed at runtime via display.setDefault("renderSync", bool).
 		/// </summary>
 		bool fFrameSync;
+
+		/// <summary>
+		///  <para>Stores the wall-clock time in milliseconds spent executing the most recent full frame tick.</para>
+		///  <para>
+		///   Measured in Evaluate() from just before operator()() is called (which runs Step() + Render())
+		///   to just after it returns. This captures total frame work time: Lua logic, physics, scene
+		///   traversal, command buffer preparation, and GL dispatch — everything the main thread does
+		///   to produce a frame.
+		///  </para>
+		///  <para>
+		///   Unlike fPreparationTime and fRenderTimeCPU in Renderer::Statistics, which only cover
+		///   portions of the render path, this value reflects the complete per-frame CPU cost
+		///   as seen from the scheduling layer.
+		///  </para>
+		///  <para>
+		///   Written atomically by the main thread in Evaluate() and read from the Lua side via
+		///   GetLastFrameWorkMs(). Safe to read from any thread without locking.
+		///  </para>
+		///  <para>Only populated when fUseDwmThread is true (DWM display-sync path).</para>
+		///  <para>Exposed to Lua via display.getStatistics() as the "frameWorkTime" field.</para>
+		/// </summary>
+		std::atomic<double> fLastFrameWorkMs{ 0.0 };
 
 	public:
 		/// <summary>
