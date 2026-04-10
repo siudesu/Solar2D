@@ -31,6 +31,9 @@ class PlatformTimer
 		virtual void Start() = 0;
 		virtual void Stop() = 0;
 		virtual void SetInterval( U32 milliseconds ) = 0;
+#ifdef Rtt_WIN_ENV
+		virtual void SetInterval(double milliseconds) { SetInterval((U32)(milliseconds + 0.5)); }
+#endif
 		virtual bool IsRunning() const = 0;
 
 		// Problem: On iOS, when the screen locks and the display turns off,

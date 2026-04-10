@@ -1401,14 +1401,14 @@ void Runtime::OnMonitorChanged(double newRefreshRate)
 	if (newRefreshRate <= 0.0 || !IsProperty(kIsApplicationLoaded))
 		return;
 
-	U32 kFps = fFPS;
-	if (kFps > (U32)newRefreshRate)
-		kFps = (U32)newRefreshRate;
+	double kFps = static_cast<double>(fFPS);
+	if (kFps > newRefreshRate)
+		kFps = newRefreshRate;
 
-	const U32 kInterval = 1000 / kFps;
-	fTimer->SetInterval(kInterval);
+	fTimer->SetInterval(1000.0 / kFps);
 
-	MonitorChangedEvent e(newRefreshRate, kFps);
+	// DispatchEvent still needs integer fps for the Lua event.
+	MonitorChangedEvent e(newRefreshRate, static_cast<U32>(kFps));
 	DispatchEvent(e);
 }
 #endif
@@ -1418,17 +1418,17 @@ Runtime::BeginRunLoop()
 {
 	double refreshRate = fTimer->GetRefreshRate();
 
-	// Calculate the effective fps — cap to monitor refresh rate if exceeded.
+	// Calculate the effective fps - cap to monitor refresh rate if exceeded.
 	// fFPS is never modified so display.fps always reflects config.lua.
-	U32 kFps = fFPS;
-	if (refreshRate > 0.0 && kFps > (U8)refreshRate)
+	double kFps = static_cast<double>(fFPS);
+	if (refreshRate > 0.0 && kFps > refreshRate)
 	{
-		Rtt_LogException("WARNING: config.lua fps (%d) exceeds display refresh rate (%.0fHz). Capping to %.0ffps.\n",
+		Rtt_LogException("WARNING: config.lua fps (%.0f) exceeds display refresh rate (%.0fHz). Capping to %.0ffps.\n",
 			kFps, refreshRate, refreshRate);
-		kFps = (U8)refreshRate;
+		kFps = refreshRate;
 	}
 
-	const U32 kInterval = 1000 / kFps;
+	const double kInterval = 1000.0 / kFps;
 
 #ifdef Rtt_WIN_ENV
 	// On Windows, kFps may differ from fFPS if the monitor refresh rate cap

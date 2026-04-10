@@ -56,6 +56,7 @@ namespace Rtt
 		///  <para>Cannot be set less than 10 milliseconds.</para>
 		/// </param>
 		virtual void SetInterval(U32 milliseconds) override;
+		virtual void SetInterval(double milliseconds) override;
 
 		/// <summary>Determines if the timer is currently running.</summary>
 		/// <returns>Returns true if the timer is currently running. Returns false if not started or stopped.</returns>
@@ -215,10 +216,10 @@ namespace Rtt
 		/// </summary>
 		bool fUseDwmThread;
 
-		// Legacy WM_TIMER fallback members — only used when fUseDwmThread is false.
+		// Legacy WM_TIMER fallback members - only used when fUseDwmThread is false.
 		UINT_PTR fTimerPointer;
 		UINT_PTR fTimerID;
-		std::atomic<U32> fIntervalInMilliseconds;
+		std::atomic<double> fIntervalInMilliseconds;
 		S32 fNextIntervalTimeInTicks;
 
 		/// <summary>

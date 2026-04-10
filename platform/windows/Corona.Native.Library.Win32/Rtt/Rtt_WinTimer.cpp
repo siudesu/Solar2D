@@ -46,7 +46,7 @@ namespace Rtt
 		fUseDwmThread(false),
 		fTimerPointer(NULL),
 		fTimerID(0),
-		fIntervalInMilliseconds(10),
+		fIntervalInMilliseconds(10.0),
 		fNextIntervalTimeInTicks(0),
 		fTickPending(false),
 		fFrameSync(true)
@@ -197,6 +197,11 @@ namespace Rtt
 		fIntervalInMilliseconds = milliseconds;
 	}
 
+	void WinTimer::SetInterval(double milliseconds)
+	{
+		fIntervalInMilliseconds = milliseconds;
+	}
+
 	bool WinTimer::IsRunning() const
 	{
 		if (fUseDwmThread)
@@ -298,7 +303,7 @@ namespace Rtt
 
 		double refreshRate = GetRefreshRate();
 		double targetFrameTime = 1.0 / refreshRate;
-		double intervalSeconds = static_cast<double>(fIntervalInMilliseconds) / 1000.0;
+		double intervalSeconds = fIntervalInMilliseconds.load() / 1000.0;
 
 		LARGE_INTEGER start;
 		::QueryPerformanceCounter(&start);
@@ -391,9 +396,9 @@ namespace Rtt
 					refreshRate		= newRefreshRate;
 					targetFrameTime = 1.0 / refreshRate;
 
-					// Re-read the interval — SetInterval() may have been called
+					// Re-read the interval - SetInterval() may have been called
 					// by Runtime::OnMonitorChanged() on the main thread.
-					intervalSeconds = static_cast<double>(fIntervalInMilliseconds.load()) / 1000.0;
+					intervalSeconds = fIntervalInMilliseconds.load() / 1000.0;
 
 
 					// Reset the vsync deadline to the current time so the new
