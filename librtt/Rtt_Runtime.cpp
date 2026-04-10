@@ -1423,8 +1423,8 @@ Runtime::BeginRunLoop()
 	double kFps = static_cast<double>(fFPS);
 	if (refreshRate > 0.0 && kFps > refreshRate)
 	{
-		Rtt_LogException("WARNING: config.lua fps (%.0f) exceeds display refresh rate (%.0fHz). Capping to %.0ffps.\n",
-			kFps, refreshRate, refreshRate);
+		Rtt_LogException("WARNING: config.lua fps (%d) exceeds display refresh rate (%.4fHz). Capping to %.4ffps.\n",
+			(int)kFps, refreshRate, refreshRate);
 		kFps = refreshRate;
 	}
 
