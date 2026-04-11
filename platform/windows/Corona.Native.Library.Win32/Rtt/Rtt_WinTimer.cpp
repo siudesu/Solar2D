@@ -40,7 +40,8 @@ namespace Rtt
 	WinTimer::WinTimer(MCallback& callback, HWND windowHandle)
 		: PlatformTimer(callback),
 		fWindowHandle(windowHandle),
-		fThreadHandle(nullptr),
+		fVsyncThreadHandle(nullptr),
+		fMonitorWatchThreadHandle(nullptr),
 		fStopEvent(nullptr),
 		fRunning(false),
 		fUseDwmThread(false),
@@ -103,16 +104,25 @@ namespace Rtt
 			// Rtt::Runtime::Resume() directly, bypassing RuntimeEnvironment::Resume().
 			::timeBeginPeriod(1);
 
+			fPendingRefreshRate.store(GetRefreshRate());
+
 			fStopEvent = ::CreateEvent(nullptr, TRUE, FALSE, nullptr);
-			fThreadHandle = ::CreateThread(
+			fVsyncThreadHandle = ::CreateThread(
 				nullptr, 0, WinTimer::TimerThreadProc, this, 0, nullptr);
 
-			if (fThreadHandle)
+			if (fVsyncThreadHandle)
 			{
-				// Run at normal priority — the thread spends most of its time
+				// Run at normal priority - the thread spends most of its time
 				// sleeping and only needs brief CPU access for the spin phase.
-				::SetThreadPriority(fThreadHandle, THREAD_PRIORITY_NORMAL);
+				::SetThreadPriority(fVsyncThreadHandle, THREAD_PRIORITY_NORMAL);
 			}
+
+			// Monitor watch runs at below-normal priority - it only polls every 500ms
+			// and should never compete with the vsync thread for CPU time.
+			fMonitorWatchThreadHandle = ::CreateThread(
+				nullptr, 0, WinTimer::MonitorWatchThreadProc, this, 0, nullptr);
+			if (fMonitorWatchThreadHandle)
+				::SetThreadPriority(fMonitorWatchThreadHandle, THREAD_PRIORITY_BELOW_NORMAL);
 		}
 		else
 		{
@@ -124,7 +134,7 @@ namespace Rtt
 			fTimerPointer = ::SetTimer(fWindowHandle, fTimerID, 10, WinTimer::OnTimerElapsed);
 			if (!fTimerPointer)
 			{
-				// SetTimer failed — remove from map so we don't hold a dangling entry.
+				// SetTimer failed - remove from map so we don't hold a dangling entry.
 				sTimerMap.erase(fTimerID);
 			}
 		}
@@ -154,11 +164,17 @@ namespace Rtt
 			{
 				::SetEvent(fStopEvent);
 			}
-			if (fThreadHandle)
+			if (fVsyncThreadHandle)
 			{
-				::WaitForSingleObject(fThreadHandle, 2000);
-				::CloseHandle(fThreadHandle);
-				fThreadHandle = nullptr;
+				::WaitForSingleObject(fVsyncThreadHandle, 2000);
+				::CloseHandle(fVsyncThreadHandle);
+				fVsyncThreadHandle = nullptr;
+			}
+			if (fMonitorWatchThreadHandle)
+			{
+				::WaitForSingleObject(fMonitorWatchThreadHandle, 2000);
+				::CloseHandle(fMonitorWatchThreadHandle);
+				fMonitorWatchThreadHandle = nullptr;
 			}
 			if (fStopEvent)
 			{
@@ -167,7 +183,7 @@ namespace Rtt
 			}
 
 			// Drain any WM_CORONA_TIMER messages the thread posted just before
-			// exiting. fWindowHandle is still valid here — DestroyWindow hasn't
+			// exiting. fWindowHandle is still valid here - DestroyWindow hasn't
 			// been called yet. Safe to call with fTimerID == 0 because
 			// PeekMessage filters by HWND only, not wParam.
 			if (fWindowHandle)
@@ -180,6 +196,7 @@ namespace Rtt
 			}
 
 			fTickPending.store(false);
+			fPendingRefreshRate.store(0.0);
 
 			// Restore the system timer resolution we raised in Start().
 			::timeEndPeriod(1);
@@ -206,10 +223,10 @@ namespace Rtt
 	{
 		if (fUseDwmThread)
 		{
-			// Display-sync path does not use fTimerPointer — use fRunning instead.
+			// Display-sync path does not use fTimerPointer - use fRunning instead.
 			return fRunning;
 		}
-		// Legacy path — timer is running if SetTimer() returned a valid handle.
+		// Legacy path - timer is running if SetTimer() returned a valid handle.
 		return (fTimerPointer != NULL);
 	}
 
@@ -225,7 +242,7 @@ namespace Rtt
 		{
 			// Display-sync path: measure the wall-clock time spent executing the full
 			// frame tick. The measurement brackets operator()() which runs Step() +
-			// Render() — covering Lua logic, physics, scene traversal, command buffer
+			// Render() - covering Lua logic, physics, scene traversal, command buffer
 			// preparation, and GL dispatch. This gives a complete picture of CPU frame
 			// work time as seen from the scheduling layer, independent of the idle time
 			// the background thread spends sleeping between ticks.
@@ -309,12 +326,14 @@ namespace Rtt
 		::QueryPerformanceCounter(&start);
 
 		double nextTick = 0.0;
-		double nextLogicTick = intervalSeconds;
 
-		// Counter for periodic refresh rate checks. Declared outside the loop
-		// so it resets cleanly on each ThreadLoop() invocation rather than
-		// persisting across timer restarts as a static would.
-		int refreshCheckCounter = 0;
+		// Vsync counter drives logic ticks instead of a separate float accumulator.
+		// This phase-locks logic ticks to display boundaries, eliminating the motion
+		// blur caused by two independent float cadences drifting out of phase.
+		// e.g. 60fps on 120Hz fires a logic tick every 2nd vsync, perfectly locked.
+		int vsyncCount = 0;
+		int logicInterval = (int)round(refreshRate * intervalSeconds);
+		if (logicInterval < 1) logicInterval = 1;
 
 		while (fRunning)
 		{
@@ -342,16 +361,53 @@ namespace Rtt
 			}
 
 			// ---- FIRE ----
+			// Check if MonitorWatchLoop has detected a monitor change since the last tick.
+			// Atomically swap fPendingRefreshRate to 0.0 - a non-zero value means a new
+			// rate is waiting. Applying it here keeps all timing state on this thread,
+			// avoiding any need for locks around refreshRate/logicInterval/nextTick.
+			double pendingRate = fPendingRefreshRate.exchange(0.0);
+			if (pendingRate > 0.0 && fabs(pendingRate - refreshRate) > 1.0)
+			{
+				refreshRate = pendingRate;
+				targetFrameTime = 1.0 / refreshRate;
+				intervalSeconds = fIntervalInMilliseconds.load() / 1000.0;
+
+				logicInterval = (int)round(refreshRate * intervalSeconds);
+				if (logicInterval < 1) logicInterval = 1;
+
+				// Reset vsync phase cleanly on monitor change.
+				vsyncCount = fTickPending.load() ? (logicInterval - 1) : 0;
+
+				// Re-anchor nextTick from now so the new cadence starts cleanly
+				// rather than trying to catch up from a stale deadline.
+				::QueryPerformanceCounter(&now);
+				currentTime = (double)(now.QuadPart - start.QuadPart) / freq.QuadPart;
+				nextTick = currentTime + targetFrameTime;
+			}
+
 			// Always re-read interval in case SetInterval() was called externally
 			// (e.g. after a monitor change updates the effective fps cap).
-			intervalSeconds = static_cast<double>(fIntervalInMilliseconds.load()) / 1000.0;
+			intervalSeconds = fIntervalInMilliseconds.load() / 1000.0;
 
-			// Logic tick — wall-clock driven, independent of vsync.
-			// Fires at intervalSeconds regardless of refresh rate.
-			bool doStep = (currentTime >= nextLogicTick);
+			// Recalculate logicInterval every tick from the live interval.
+			// This ensures it stays correct after SetInterval() is called by the
+			// main thread in response to WM_CORONA_MONITOR_CHANGED, without needing
+			// to coordinate timing between the two threads.
+			int newLogicInterval = (int)round(refreshRate * intervalSeconds);
+			if (newLogicInterval < 1) newLogicInterval = 1;
+			if (newLogicInterval != logicInterval)
+			{
+				logicInterval = newLogicInterval;
+				vsyncCount = 0; // reset phase cleanly on any interval change
+			}
+
+			// Logic tick - vsync-counter driven, phase-locked to display refresh.
+			// Fires every Nth vsync where N = round(refreshRate * intervalSeconds).
+			vsyncCount++;
+			bool doStep = (vsyncCount >= logicInterval);
 			if (doStep)
 			{
-				nextLogicTick += intervalSeconds;
+				vsyncCount = 0;
 
 				bool expected = false;
 				if (fTickPending.compare_exchange_strong(expected, true))
@@ -367,7 +423,7 @@ namespace Rtt
 				}
 			}
 
-			// Render-only tick — call InvalidateRect directly from the thread.
+			// Render-only tick - call InvalidateRect directly from the thread.
 			// This is thread-safe, coalescing (multiple calls before the next
 			// paint are merged into one WM_PAINT), and WM_PAINT is a low-priority
 			// synthesized message that Windows only delivers when the queue is
@@ -375,54 +431,56 @@ namespace Rtt
 			// WM_TIMER, input messages, or anything else in the queue.
 			// IsWindow() guards against the window being destroyed during the
 			// brief window between Stop() setting fRunning=false and the thread
-			// fully exiting — InvalidateRect on a destroyed HWND can corrupt
+			// fully exiting - InvalidateRect on a destroyed HWND can corrupt
 			// Win32 window state and cause the Simulator to steal foreground focus.
 			if (fFrameSync && !doStep && ::IsWindow(fWindowHandle))
-			{
 				::InvalidateRect(fWindowHandle, nullptr, FALSE);
-			}
-
-			// ---- MONITOR CHANGE CHECK ----
-			// Re-query the refresh rate every 60 ticks (~0.5s at 120Hz) to detect
-			// when the window has been moved to a monitor with a different refresh
-			// rate. GetRefreshRate() queries DXGI which is not free, so we avoid
-			// calling it every frame. A ~0.5s detection window shoule be responsive enough.
-			if (++refreshCheckCounter >= 60)
-			{
-				refreshCheckCounter = 0;
-				double newRefreshRate = GetRefreshRate();
-				if (fabs(newRefreshRate - refreshRate) > 1.0)
-				{
-					refreshRate		= newRefreshRate;
-					targetFrameTime = 1.0 / refreshRate;
-
-					// Re-read the interval - SetInterval() may have been called
-					// by Runtime::OnMonitorChanged() on the main thread.
-					intervalSeconds = fIntervalInMilliseconds.load() / 1000.0;
-
-
-					// Reset the vsync deadline to the current time so the new
-					// cadence starts cleanly without carrying over accumulated
-					// delta from the old refresh rate.
-					::QueryPerformanceCounter(&now);
-					currentTime = (double)(now.QuadPart - start.QuadPart) / freq.QuadPart;
-					nextTick = currentTime;
-
-					if (nextLogicTick < currentTime)
-						nextLogicTick = currentTime + intervalSeconds;
-
-					// Notify the main thread. Encode Hz * 1000 as WPARAM for
-					// lossless integer transport (e.g. 59940 for 59.940 Hz).
-					if (::IsWindow(fWindowHandle))
-					{
-						::PostMessage(fWindowHandle, WM_CORONA_MONITOR_CHANGED,
-							(WPARAM)(UINT)(newRefreshRate * 1000.0), (LPARAM)fTimerID);
-					}
-				}
-			}
 
 			// Advance vsync deadline by exactly one display interval.
 			nextTick += targetFrameTime;
+		}
+	}
+
+	DWORD WINAPI WinTimer::MonitorWatchThreadProc(LPVOID lpParam)
+	{
+		static_cast<WinTimer*>(lpParam)->MonitorWatchLoop();
+		return 0;
+	}
+
+	void WinTimer::MonitorWatchLoop()
+	{
+		// Snapshot the current refresh rate as our baseline for change detection.
+		// GetRefreshRate() tries DXGI first, then DWM timing info, then
+		// EnumDisplaySettings - so this initial read is as accurate as the
+		// per-poll reads that follow.
+		double lastRate = fPendingRefreshRate.load();
+
+		// WaitForSingleObject with a 500ms timeout serves dual purpose:
+		//   - Acts as the poll interval (check for monitor changes twice per second).
+		//   - Exits immediately when Stop() signals fStopEvent, so shutdown
+		//     never waits a full 500ms for the next poll cycle to complete.
+		while (::WaitForSingleObject(fStopEvent, 500) == WAIT_TIMEOUT)
+		{
+			double newRate = GetRefreshRate();
+
+			// Use a 1Hz threshold to avoid false positives from floating-point
+			// variance between successive DXGI queries of the same display.
+			if (fabs(newRate - lastRate) > 1.0)
+			{
+				lastRate = newRate;
+
+				// Write the new rate atomically so ThreadLoop picks it up on its
+				// next vsync tick without any cross-thread signaling overhead.
+				fPendingRefreshRate.store(newRate);
+
+				// Also notify the main thread so RenderSurfaceControl can update
+				// its own rate cap (fPendingMonitorRefreshRate) and fire its event.
+				if (::IsWindow(fWindowHandle))
+				{
+					::PostMessage(fWindowHandle, WM_CORONA_MONITOR_CHANGED,
+						(WPARAM)(UINT)(newRate * 1000.0), (LPARAM)fTimerID);
+				}
+			}
 		}
 	}
 
@@ -509,7 +567,7 @@ namespace Rtt
 
 	double WinTimer::GetRefreshRate() const
 	{
-		// Try DXGI first — most accurate, directly from GPU driver.
+		// Try DXGI first - most accurate, directly from GPU driver.
 		// Correctly returns fractional rates like 59.94Hz that
 		// EnumDisplaySettings truncates to integers.
 		double hz = GetRefreshRateFromDXGI();
@@ -529,7 +587,7 @@ namespace Rtt
 			}
 		}
 
-		// Final fallback — EnumDisplaySettings integer value.
+		// Final fallback - EnumDisplaySettings integer value.
 		DEVMODE dm = {};
 		dm.dmSize = sizeof(dm);
 		if (::EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &dm))
@@ -538,13 +596,13 @@ namespace Rtt
 				return static_cast<double>(dm.dmDisplayFrequency);
 		}
 
-		// Safe fallback — assumes 60Hz if all queries fail.
+		// Safe fallback - assumes 60Hz if all queries fail.
 		return 60.0;
 	}
 
 	VOID CALLBACK WinTimer::OnTimerElapsed(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)
 	{
-		// Legacy WM_TIMER callback — only active when fUseDwmThread is false.
+		// Legacy WM_TIMER callback - only active when fUseDwmThread is false.
 		// Look up the WinTimer instance by ID and ask it to evaluate whether
 		// the configured interval has elapsed. The map guard prevents crashes
 		// if this callback fires after Stop() has already removed the entry.

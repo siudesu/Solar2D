@@ -166,6 +166,26 @@ namespace Rtt
 		void ThreadLoop();
 
 		/// <summary>
+		///  <para>Static entry point for the monitor watch background thread.</para>
+		///  <para>Delegates immediately to MonitorWatchLoop() on the WinTimer instance passed via lpParam.</para>
+		/// </summary>
+		static DWORD WINAPI MonitorWatchThreadProc(LPVOID lpParam);
+
+		/// <summary>
+		///  <para>Polls the display refresh rate every 500ms to detect monitor changes.</para>
+		///  <para>
+		///   Runs on a dedicated background thread so the vsync loop in ThreadLoop()
+		///   is never burdened with DXGI queries. When a rate change greater than 1Hz
+		///   is detected, WM_CORONA_MONITOR_CHANGED is posted to the main thread.
+		///  </para>
+		///  <para>
+		///   Uses WaitForSingleObject on fStopEvent with a 500ms timeout so it exits
+		///   immediately when Stop() signals the event, with no artificial shutdown delay.
+		///  </para>
+		/// </summary>
+		void MonitorWatchLoop();
+
+		/// <summary>
 		///  <para>Called by Windows when the legacy system timer has elapsed.</para>
 		///  <para>Calls WinTimer's Evaluate() function to see if it is time to invoke its callback.</para>
 		///  <para>Only used when DWM composition is not available (e.g. remote desktop, older Windows).</para>
@@ -191,10 +211,27 @@ namespace Rtt
 		HWND fWindowHandle;
 
 		/// <summary>
-		///  Background thread handle for the display-sync timer loop.
+		///  Background thread handle for the display-sync (vsync) timer loop.
 		///  Only valid when fUseDwmThread is true and the timer is running.
 		/// </summary>
-		HANDLE fThreadHandle;
+		HANDLE fVsyncThreadHandle;
+
+		/// <summary>
+		///  Background thread handle for the monitor watch loop.
+		///  Polls GetRefreshRate() every 500ms and posts WM_CORONA_MONITOR_CHANGED
+		///  when the window has moved to a display with a different refresh rate.
+		///  Only valid when fUseDwmThread is true and the timer is running.
+		/// </summary>
+		HANDLE fMonitorWatchThreadHandle;
+
+		/// <summary>
+		///  Shared refresh rate written by MonitorWatchLoop when a monitor change is
+		///  detected, and read by ThreadLoop on every vsync tick. Avoids any need for
+		///  locking or cross-thread messages between the two background threads.
+		///  Initialized to 0.0 — ThreadLoop treats any non-zero value as a pending
+		///  monitor change and applies it at the top of the next fire phase.
+		/// </summary>
+		std::atomic<double> fPendingRefreshRate{ 0.0 };
 
 		/// <summary>
 		///  Event signaled by Stop() to request the background thread to exit cleanly.
