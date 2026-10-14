@@ -177,6 +177,10 @@ class Renderer
         // the next time a valid rendering context is available.
         void QueueDestroy( GPUResource* resource );
 
+        // Removes the given data from the pending create/update queues. Called when it is deleted,
+        // which can happen before the next render processes those queues (see Scene::CollectIfNotRendering()).
+        void RemoveFromQueues( CPUResource* resource );
+
         // Return true if wireframe rendering is enabled. Disabled by default.
         bool GetWireframeEnabled() const;
 

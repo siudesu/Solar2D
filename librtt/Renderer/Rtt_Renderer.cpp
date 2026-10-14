@@ -1464,6 +1464,25 @@ Renderer::QueueDestroy( GPUResource* resource )
     fDestroyQueue.Append( resource );
 }
 
+static void
+RemoveAll( LightPtrArray< CPUResource >& queue, CPUResource* resource )
+{
+    for ( S32 i = queue.Length() - 1; i >= 0; --i )
+    {
+        if ( queue[i] == resource )
+        {
+            queue.Remove( i, 1, false );
+        }
+    }
+}
+
+void
+Renderer::RemoveFromQueues( CPUResource* resource )
+{
+    RemoveAll( fCreateQueue, resource );
+    RemoveAll( fUpdateQueue, resource );
+}
+
 void
 Renderer::DestroyQueuedGPUResources()
 {

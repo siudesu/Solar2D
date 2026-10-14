@@ -16,6 +16,7 @@
 #include "Core/Rtt_String.h"
 #include "Display/Rtt_Display.h"
 #include "Display/Rtt_GroupObject.h"
+#include "Display/Rtt_Scene.h"
 #include "Display/Rtt_SpritePlayer.h"
 #include "Display/Rtt_StageObject.h"
 #include "Rtt_Archive.h"
@@ -1998,6 +1999,12 @@ Runtime::operator()()
 	if ( ! IsProperty( kRenderAsync ) )
 	{
 		fDisplay->Render();
+	}
+	else
+	{
+		// The platform renders separately, and may stop doing so (e.g. a minimized window).
+		// Removed display objects are only freed after a render, so collect here if rendering stalls.
+		fDisplay->GetScene().CollectIfNotRendering();
 	}
 	
 }
