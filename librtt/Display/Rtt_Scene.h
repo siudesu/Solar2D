@@ -65,6 +65,11 @@ class Scene
 		// Intended to be called when the app is about to lose the OpenGL context and must delete GPU resources now.
 		void ForceCollect();
 
+		// Call once per update when rendering is driven separately (Runtime::kRenderAsync).
+		// Runs Collect() if the scene hasn't been rendered for a few updates, e.g. while the window is minimized,
+		// so that removed objects don't accumulate until rendering resumes.
+		void CollectIfNotRendering();
+
 	private:
 		void OnCollectUnreachables();
 
@@ -104,6 +109,7 @@ class Scene
 		LightPtrArray< LuaUserdataProxy > fProxyOrphanage;
 		bool fIsValid;
 		U8 fCounter; // DO NOT change type --- must be U8
+		U8 fUpdatesSinceRender;
 
 		// IMPORTANT: The purpose of this set is to iterate over all active
 		// MUpdatable. This class DOESN'T own these MUpdatable.

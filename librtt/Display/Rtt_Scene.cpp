@@ -57,6 +57,7 @@ Scene::Scene( Rtt_Allocator* pAllocator, Display& owner)
     fProxyOrphanage( owner.GetAllocator() ),
     fIsValid( false ),
     fCounter( 0 ),
+    fUpdatesSinceRender( 0 ),
     fActiveUpdatable()
 {
     fOffscreenStage->SetRenderedOffScreen( true );
@@ -128,6 +129,25 @@ Scene::ForceCollect()
     fBackResourceOrphanage->Empty();
     fFrontResourceOrphanage->Empty();
     OnCollectUnreachables();
+}
+
+void
+Scene::CollectIfNotRendering()
+{
+    // Updates and renders aren't in lockstep (the update rate can exceed the display's refresh
+    // rate, and an unchanged scene isn't re-rendered), so only treat rendering as stopped after
+    // a run of updates without a render (~0.25-0.5 s at 60-120 fps).
+    const U8 kMaxUpdatesWithoutRender = 30;
+
+    if ( fUpdatesSinceRender < kMaxUpdatesWithoutRender )
+    {
+        ++fUpdatesSinceRender;
+        return;
+    }
+
+    // Safe outside a render: deleting a CPUResource only queues its GPU resource for destruction
+    // on the next render, and removes the CPUResource from the renderer's pending create/update queues.
+    Collect();
 }
 
 void
@@ -306,6 +326,7 @@ Scene::Render( Renderer& renderer, PlatformSurface& rTarget, ProfilingEntryRAII*
     
     // This needs to be done at the sync point (DMZ)
     Collect();
+    fUpdatesSinceRender = 0;
 	
 	ADD_ENTRY( "Scene: Collect" );
 }

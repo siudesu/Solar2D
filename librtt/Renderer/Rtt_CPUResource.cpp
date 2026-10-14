@@ -74,6 +74,7 @@ CPUResource::~CPUResource()
 	DetachObserver();
 	if( fGPUResource && fRenderer )
 	{
+		fRenderer->RemoveFromQueues( this );
 		fRenderer->QueueDestroy( fGPUResource );
 	}
 	

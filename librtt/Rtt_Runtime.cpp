@@ -16,6 +16,7 @@
 #include "Core/Rtt_String.h"
 #include "Display/Rtt_Display.h"
 #include "Display/Rtt_GroupObject.h"
+#include "Display/Rtt_Scene.h"
 #include "Display/Rtt_SpritePlayer.h"
 #include "Display/Rtt_StageObject.h"
 #include "Rtt_Archive.h"
@@ -2019,7 +2020,7 @@ Runtime::Step()
 {
 	// Advance the simulation by one fixed logic tick.
 	// Runs the scheduler, dispatches enterFrame to Lua, updates physics and
-	// display object state. Does NOT render — rendering is handled separately
+	// display object state. Does NOT render ï¿½ rendering is handled separately
 	// by Render() which fires at the monitor refresh rate via WM_PAINT.
 	RuntimeGuard guard( * this );
 
@@ -2052,7 +2053,7 @@ Runtime::Step()
 void
 Runtime::operator()()
 {
-	// Legacy shim — keeps the Simulator and non-DWM path working unchanged.
+	// Legacy shim ï¿½ keeps the Simulator and non-DWM path working unchanged.
 	// Calls Step() followed by Render() in a single synchronous tick,
 	// matching the original pre-decoupling behavior exactly.
 	Step();
@@ -2060,6 +2061,13 @@ Runtime::operator()()
 	if (!IsProperty(kRenderAsync))
 	{
 		Render();
+	}
+	else if (fDisplay)
+	{
+		// Render() runs separately (WM_PAINT), which stops while the window is minimized.
+		// Removed display objects are only freed after a render, so collect here if rendering stalls.
+		RuntimeGuard guard( * this );
+		fDisplay->GetScene().CollectIfNotRendering();
 	}
 }
 
@@ -2102,6 +2110,13 @@ Runtime::operator()()
 	{
 		fDisplay->Render();
 	}
+	else
+	{
+		// The platform renders separately, and may stop doing so (e.g. a minimized window).
+		// Removed display objects are only freed after a render, so collect here if rendering stalls.
+		fDisplay->GetScene().CollectIfNotRendering();
+	}
+
 }
 
 #endif // Rtt_WIN_ENV
