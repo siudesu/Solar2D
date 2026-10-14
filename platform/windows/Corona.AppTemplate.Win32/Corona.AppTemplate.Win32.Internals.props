@@ -43,7 +43,8 @@ REM (2) Sets up the app template directory to be used by server remote builds.
     </PostBuildEvent>
     <Link />
     <Manifest>
-      <EnableDpiAwareness>true</EnableDpiAwareness>
+      <EnableDpiAwareness>false</EnableDpiAwareness>
+      <AdditionalManifestFiles>$(ProjectDir)..\Corona.Simulator\res\PerMonitorV2.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup />
