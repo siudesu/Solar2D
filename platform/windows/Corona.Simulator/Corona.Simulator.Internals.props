@@ -65,6 +65,10 @@ copy "..\..\..\sdk\dmg\Corona_License.rtf" "$(OutDir)" /Y
 copy "..\..\..\sdk\dmg\Corona3rdPartyLicenses.txt" "$(OutDir)" /Y
 </Command>
     </PostBuildEvent>
+    <Manifest>
+      <EnableDpiAwareness>false</EnableDpiAwareness>
+      <AdditionalManifestFiles>$(ProjectDir)res\PerMonitorV2.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
+    </Manifest>
     <Link>
       <AdditionalDependencies>..\Corona.Rtt.Library\$(Configuration).Simulator\$(Platform)\Corona.Rtt.Library.Win32\*.obj;..\Corona.Native.Library.Win32\$(Configuration).Simulator\$(Platform)\Corona.Native.Library.Win32\*.obj;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>

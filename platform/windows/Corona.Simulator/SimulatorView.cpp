@@ -1934,7 +1934,32 @@ bool CSimulatorView::InitializeSimulation(Rtt::TargetDevice::Skin skinId)
 	return skinLoaded;
 }
 
-// UpdateSimulatorSkin - Update main window size & skin based on display type, 
+/// Gets the DPI of the monitor the given window is on (per-monitor DPI aware process),
+/// or the system DPI on Windows versions older than Windows 10 1607.
+UINT CSimulatorView::GetDpiForWindowHandle(HWND windowHandle)
+{
+	typedef UINT(WINAPI *GetDpiForWindowCallback)(HWND);
+	static GetDpiForWindowCallback sGetDpiForWindowCallback =
+			(GetDpiForWindowCallback)::GetProcAddress(::GetModuleHandleW(L"user32.dll"), "GetDpiForWindow");
+
+	UINT dpiValue = 0;
+	if (windowHandle && sGetDpiForWindowCallback)
+	{
+		dpiValue = sGetDpiForWindowCallback(windowHandle);
+	}
+	if (0 == dpiValue)
+	{
+		HDC deviceContextHandle = ::GetDC(nullptr);
+		if (deviceContextHandle)
+		{
+			dpiValue = (UINT)::GetDeviceCaps(deviceContextHandle, LOGPIXELSX);
+			::ReleaseDC(nullptr, deviceContextHandle);
+		}
+	}
+	return (dpiValue > 0) ? dpiValue : 96;
+}
+
+// UpdateSimulatorSkin - Update main window size & skin based on display type,
 // zoom state, rotation state.
 // CMainFrame handles resizing the window for zoom & rotate
 void CSimulatorView::UpdateSimulatorSkin()
@@ -1961,24 +1986,15 @@ void CSimulatorView::UpdateSimulatorSkin()
 			clientHeight = display.ContentHeight();
 		}
 
-		// Apply the system's DPI scale factor to the width and height.
-		// Note: In the future, we should resize the window when the DPI scale factor changes dynamically.
-		auto deviceContextPointer = this->GetDC();
-		if (deviceContextPointer)
+		// Apply the DPI scale factor of the monitor the window is on to the width and height.
+		// CMainFrame::OnDpiChanged() calls this function again when the window moves to a monitor with a different scale.
+		const UINT kBaseDpi = 96;
+		UINT dpiValue = GetDpiForWindowHandle(GetSafeHwnd());
+		if ((dpiValue > 0) && (dpiValue != kBaseDpi))
 		{
-			const int kBaseDpi = 96;
-			int dpiValue = deviceContextPointer->GetDeviceCaps(LOGPIXELSX);
-			if ((dpiValue > 0) && (dpiValue != kBaseDpi))
-			{
-				double dpiScale = (double)dpiValue / (double)kBaseDpi;
-				clientWidth = (int)std::round((double)clientWidth * dpiScale);
-			}
-			dpiValue = deviceContextPointer->GetDeviceCaps(LOGPIXELSY);
-			if ((dpiValue > 0) && (dpiValue != kBaseDpi))
-			{
-				double dpiScale = (double)dpiValue / (double)kBaseDpi;
-				clientHeight = (int)std::round((double)clientHeight * dpiScale);
-			}
+			double dpiScale = (double)dpiValue / (double)kBaseDpi;
+			clientWidth = (int)std::round((double)clientWidth * dpiScale);
+			clientHeight = (int)std::round((double)clientHeight * dpiScale);
 		}
 	}
 	else

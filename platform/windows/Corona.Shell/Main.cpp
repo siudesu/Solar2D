@@ -54,6 +54,38 @@ LRESULT CALLBACK OnProcessWindowMessage(HWND windowHandle, UINT messageId, WPARA
 			::SetWindowPos(sRenderSurfaceWindowHandle, nullptr, 0, 0, (bounds.right - bounds.left), (bounds.bottom - bounds.top), SWP_NOZORDER);
 			break;
 		}
+		case WM_DPICHANGED:
+		{
+			// The window moved to a monitor with a different scale factor (per-monitor DPI aware only).
+			// Corona's window size comes from "build.settings" in pixels and is never DPI scaled,
+			// so keep the client size and only re-fit the frame (title bar/borders scale with DPI)
+			// around it, at the position Windows suggests.
+			const RECT* suggestedBoundsPointer = (const RECT*)lParam;
+			if (!suggestedBoundsPointer || ::IsZoomed(windowHandle) || ::IsIconic(windowHandle))
+			{
+				return 0;
+			}
+			typedef BOOL(WINAPI *AdjustWindowRectExForDpiCallback)(LPRECT, DWORD, BOOL, DWORD, UINT);
+			static AdjustWindowRectExForDpiCallback sAdjustWindowRectExForDpiCallback =
+					(AdjustWindowRectExForDpiCallback)::GetProcAddress(::GetModuleHandleW(L"user32.dll"), "AdjustWindowRectExForDpi");
+			RECT bounds{};
+			::GetClientRect(windowHandle, &bounds);
+			const DWORD styleFlags = (DWORD)::GetWindowLongPtrW(windowHandle, GWL_STYLE);
+			const DWORD exStyleFlags = (DWORD)::GetWindowLongPtrW(windowHandle, GWL_EXSTYLE);
+			const BOOL hasMenu = ::GetMenu(windowHandle) ? TRUE : FALSE;
+			if (sAdjustWindowRectExForDpiCallback)
+			{
+				sAdjustWindowRectExForDpiCallback(&bounds, styleFlags, hasMenu, exStyleFlags, (UINT)LOWORD(wParam));
+			}
+			else
+			{
+				::AdjustWindowRectEx(&bounds, styleFlags, hasMenu, exStyleFlags);
+			}
+			::SetWindowPos(
+					windowHandle, nullptr, suggestedBoundsPointer->left, suggestedBoundsPointer->top,
+					bounds.right - bounds.left, bounds.bottom - bounds.top, SWP_NOZORDER | SWP_NOACTIVATE);
+			return 0;
+		}
 		case WM_ERASEBKGND:
 		{
 			// Don't allow Windows to repainting the window's client area. This achieves the following:

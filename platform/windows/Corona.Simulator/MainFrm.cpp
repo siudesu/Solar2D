@@ -40,6 +40,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_WM_CLOSE()
 	ON_WM_SIZE()
 	ON_WM_GETMINMAXINFO()
+	ON_MESSAGE(WM_DPICHANGED, &CMainFrame::OnDpiChanged)
 	ON_COMMAND(ID_WINDOW_ZOOMIN, &CMainFrame::OnWindowZoomIn)
 	ON_COMMAND(ID_WINDOW_ZOOMOUT, &CMainFrame::OnWindowZoomOut)
 	ON_UPDATE_COMMAND_UI(ID_WINDOW_ZOOMOUT, &CMainFrame::OnUpdateWindowZoomOut)
@@ -166,6 +167,33 @@ void CMainFrame::OnGetMinMaxInfo(MINMAXINFO* lpMMI)
 	lpMMI->ptMaxTrackSize.x = LONG_MAX;
 	lpMMI->ptMaxTrackSize.y = LONG_MAX;
     m_ptMinTrackSize = lpMMI->ptMinTrackSize;
+}
+
+// OnDpiChanged - the window moved to a monitor with a different scale factor, or the scale
+// factor of its monitor changed. (Only sent to per-monitor DPI aware windows.)
+// Move to the rectangle Windows suggests so the window stays on the new monitor, then let
+// the view re-fit the client area: skins and simulated device screens keep their pixel size,
+// and the internal screens (Home, Demos) are re-scaled to the new DPI.
+LRESULT CMainFrame::OnDpiChanged(WPARAM wParam, LPARAM lParam)
+{
+	const RECT* suggestedBoundsPointer = (const RECT*)lParam;
+	if (suggestedBoundsPointer)
+	{
+		SetWindowPos(
+				nullptr, suggestedBoundsPointer->left, suggestedBoundsPointer->top,
+				suggestedBoundsPointer->right - suggestedBoundsPointer->left,
+				suggestedBoundsPointer->bottom - suggestedBoundsPointer->top,
+				SWP_NOZORDER | SWP_NOACTIVATE);
+	}
+
+	CSimulatorView *viewPointer = (CSimulatorView*)GetActiveView();
+	if (viewPointer)
+	{
+		viewPointer->UpdateSimulatorSkin();
+	}
+	DrawMenuBar();
+	RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
+	return 0;
 }
 
 // OnUpdateWindowZoomOut - can zoom out further if Windows allows the

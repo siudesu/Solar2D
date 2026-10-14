@@ -21,7 +21,8 @@
 </Command>
     </PostBuildEvent>
     <Manifest>
-      <EnableDpiAwareness>true</EnableDpiAwareness>
+      <EnableDpiAwareness>false</EnableDpiAwareness>
+      <AdditionalManifestFiles>$(ProjectDir)..\Corona.Simulator\res\PerMonitorV2.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup />

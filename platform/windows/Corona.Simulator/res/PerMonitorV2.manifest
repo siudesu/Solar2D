@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<!--
+	Per-monitor DPI awareness (V2) for the Corona Simulator.
+	Windows 10 1703+ reads <dpiAwareness>; older versions fall back to <dpiAware>
+	(per-monitor V1 on Windows 8.1, system-aware on Windows 7).
+	Replaces Visual Studio's default dpiaware.manifest (system-aware only), so
+	EnableDpiAwareness is set to false in Corona.Simulator.Internals.props.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2, PerMonitor</dpiAwareness>
+    </windowsSettings>
+  </application>
+</assembly>
