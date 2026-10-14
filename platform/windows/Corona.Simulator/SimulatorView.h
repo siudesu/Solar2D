@@ -61,6 +61,7 @@ class CSimulatorView : public CView
 		int GetRotation() { return mRotation; }
 		Gdiplus::Bitmap *GetSkinBitmap() { return mpSkinBitmap; }
 		void UpdateSimulatorSkin();  // zoom functions in CMainFrame call this
+		static UINT GetDpiForWindowHandle(HWND windowHandle);
 		Interop::SimulatorRuntimeEnvironment* GetRuntimeEnvironment()  { return mRuntimeEnvironmentPointer; }
 		void GetRecentDocs(Rtt::LightPtrArray<Rtt::RecentProjectInfo> *list);
 		void PostOpenWithPath(CString fileName);

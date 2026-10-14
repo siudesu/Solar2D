@@ -37,6 +37,7 @@ class CMainFrame : public CFrameWnd
 		afx_msg void OnClose();
 		afx_msg void OnSize(UINT nType, int cx, int cy);
 		afx_msg void OnGetMinMaxInfo(MINMAXINFO* lpMMI);
+		afx_msg LRESULT OnDpiChanged(WPARAM wParam, LPARAM lParam);
 		afx_msg void OnWindowZoomIn();
 		afx_msg void OnWindowZoomOut();
 		afx_msg void OnUpdateWindowZoomOut(CCmdUI *pCmdUI);
