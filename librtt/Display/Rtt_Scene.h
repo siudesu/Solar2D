@@ -66,7 +66,7 @@ class Scene
 		void ForceCollect();
 
 		// Call once per update when rendering is driven separately (Runtime::kRenderAsync).
-		// Runs Collect() if the scene hasn't been rendered for a few updates, e.g. while the window is minimized,
+		// Runs Collect() once the scene hasn't been rendered for 30 updates (e.g. while the window is minimized),
 		// so that removed objects don't accumulate until rendering resumes.
 		void CollectIfNotRendering();
 
