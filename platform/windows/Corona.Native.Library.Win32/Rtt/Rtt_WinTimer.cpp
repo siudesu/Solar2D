@@ -186,12 +186,23 @@ namespace Rtt
 			// exiting. fWindowHandle is still valid here - DestroyWindow hasn't
 			// been called yet. Safe to call with fTimerID == 0 because
 			// PeekMessage filters by HWND only, not wParam.
+			//
+			// PeekMessage ALWAYS returns a pending WM_QUIT, whatever the filters.
+			// Stop() runs while the window tree is being destroyed (the parent's
+			// WM_DESTROY has already called PostQuitMessage), so removing it here
+			// would leave the host's message loop waiting forever: the Win32 Shell
+			// process stayed alive after its window closed. Re-post it and stop.
 			if (fWindowHandle)
 			{
 				MSG msg;
 				while (::PeekMessage(&msg, fWindowHandle,
 					WM_CORONA_TIMER, WM_CORONA_TIMER, PM_REMOVE))
 				{
+					if (msg.message == WM_QUIT)
+					{
+						::PostQuitMessage((int)msg.wParam);
+						break;
+					}
 				}
 			}
 
