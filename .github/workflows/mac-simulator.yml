@@ -29,18 +29,25 @@ jobs:
           echo "DAY=$(date +%-d)" >> "$GITHUB_ENV"
           echo "BUILD=$YEAR.$BUILD_NUMBER" >> "$GITHUB_ENV"
       - run: ./tools/GHAction/process_sources.sh
+      - name: Ad-hoc signing in the project's script phases (no Corona Labs certificate here)
+        run: |
+          grep -c "Developer ID Application: Corona Labs Inc" platform/mac/ratatouille.xcodeproj/project.pbxproj || true
+          sed -i '' 's/Developer ID Application: Corona Labs Inc/-/g' platform/mac/ratatouille.xcodeproj/project.pbxproj
       - name: Build Corona Simulator.app (rttplayer)
         run: |
-          set -o pipefail
+          set +e
           xcodebuild -project platform/mac/ratatouille.xcodeproj -target rttplayer -configuration Release \
             CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= \
-            OTHER_CODE_SIGN_FLAGS=--timestamp=none 2>&1 | tee xcodebuild.log | grep -E "error:|warning: .*GLView|BUILD (SUCCEEDED|FAILED)|\*\* " || true
-          tail -5 xcodebuild.log
+            OTHER_CODE_SIGN_FLAGS=--timestamp=none > xcodebuild.log 2>&1
+          rc=$?
+          # Errors as annotations: readable through the public API without signing in.
+          grep -E "error:|\*\* BUILD|Command .* failed|returned a non-zero" xcodebuild.log | sort -u | head -40 | while IFS= read -r l; do echo "::error::${l:0:900}"; done
+          tail -3 xcodebuild.log | while IFS= read -r l; do echo "::notice::${l:0:900}"; done
+          exit $rc
       - name: Package
         run: |
-          APP="$(find platform/mac/build -maxdepth 3 -name 'Corona Simulator.app' -path '*Release*' | head -1)"
-          echo "app: $APP"
-          test -n "$APP"
+          APP="platform/mac/build/Release/Corona Simulator.app"
+          test -d "$APP" || { echo "::error::no app at $APP"; ls platform/mac/build/Release | head -40; exit 1; }
           codesign -dv "$APP" 2>&1 | head -5 || true
           mkdir -p output
           ditto -c -k --keepParent "$APP" "output/Corona-Simulator-mac-$YEAR.$BUILD_NUMBER-${GITHUB_SHA::8}.zip"
@@ -49,6 +56,9 @@ jobs:
         if: always()
         with:
           name: Simulator-macOS-app
-          path: |
-            output
-            xcodebuild.log
+          path: output
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
