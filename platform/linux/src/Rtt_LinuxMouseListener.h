@@ -12,6 +12,7 @@ namespace Rtt
 	struct LinuxMouseListener : public ref_counted
 	{
 		float fScaleX, fScaleY;
+		Uint32 fButtons;   // SDL_BUTTON() mask as of the last mouse event
 
 		LinuxMouseListener();
 

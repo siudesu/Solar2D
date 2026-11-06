@@ -1,12 +1,14 @@
 #include "Rtt_LinuxMouseListener.h"
 #include "Rtt_MPlatformDevice.h"
 #include "Rtt_LinuxApp.h"
+#include "Display/Rtt_Display.h"
 
 namespace Rtt
 {
 	LinuxMouseListener::LinuxMouseListener()
 		: fScaleX(1)
 		, fScaleY(1)
+		, fButtons(0)
 	{
 	}
 
@@ -167,11 +169,14 @@ namespace Rtt
 
 				float scrollWheelDeltaX = 0;
 				float scrollWheelDeltaY = 0;
+				if (evt.type == SDL_MOUSEBUTTONDOWN) fButtons |= SDL_BUTTON(b.button);
+				else fButtons &= ~SDL_BUTTON(b.button);
 
-				// Fetch the mouse's current up/down buttons states.
-				bool isPrimaryDown = SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_LEFT);
-				bool isSecondaryDown = SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_RIGHT);
-				bool isMiddleDown = SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_MIDDLE);
+				// The buttons as of this event (as Windows' MK_ flags), not SDL_GetMouseState: that is the state after
+				// everything already pumped, so a quick click's "down" would see the button released.
+				bool isPrimaryDown = fButtons & SDL_BUTTON(SDL_BUTTON_LEFT);
+				bool isSecondaryDown = fButtons & SDL_BUTTON(SDL_BUTTON_RIGHT);
+				bool isMiddleDown = fButtons & SDL_BUTTON(SDL_BUTTON_MIDDLE);
 
 				// Fetch the current state of the "shift", "alt", and "ctrl" keys.
 				const Uint8* key = SDL_GetKeyboardState(NULL);
@@ -191,7 +196,7 @@ namespace Rtt
 
 		case SDL_MOUSEMOTION:
 		{
-			const SDL_MouseButtonEvent& b = evt.button;
+			const SDL_MouseMotionEvent& b = evt.motion;
 			if (b.which != SDL_TOUCH_MOUSEID)
 			{
 				int x = b.x;
@@ -200,11 +205,13 @@ namespace Rtt
 
 				float scrollWheelDeltaX = 0;
 				float scrollWheelDeltaY = 0;
+				fButtons = b.state;
 
-				// Fetch the mouse's current up/down buttons states.
-				bool isPrimaryDown = SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_LEFT);
-				bool isSecondaryDown = SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_RIGHT);
-				bool isMiddleDown = SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_MIDDLE);
+				// The buttons as of this event (as Windows' MK_ flags), not SDL_GetMouseState: that is the state after
+				// everything already pumped, so a quick click's "down" would see the button released.
+				bool isPrimaryDown = fButtons & SDL_BUTTON(SDL_BUTTON_LEFT);
+				bool isSecondaryDown = fButtons & SDL_BUTTON(SDL_BUTTON_RIGHT);
+				bool isMiddleDown = fButtons & SDL_BUTTON(SDL_BUTTON_MIDDLE);
 
 				// Fetch the current state of the "shift", "alt", and "ctrl" keys.
 				const Uint8* key = SDL_GetKeyboardState(NULL);
@@ -245,11 +252,14 @@ namespace Rtt
 
 				float scrollWheelDeltaX = 0;
 				float scrollWheelDeltaY = 0;
+				if (evt.type == SDL_MOUSEBUTTONDOWN) fButtons |= SDL_BUTTON(b.button);
+				else fButtons &= ~SDL_BUTTON(b.button);
 
-				// Fetch the mouse's current up/down buttons states.
-				bool isPrimaryDown = SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_LEFT);
-				bool isSecondaryDown = SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_RIGHT);
-				bool isMiddleDown = SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_MIDDLE);
+				// The buttons as of this event (as Windows' MK_ flags), not SDL_GetMouseState: that is the state after
+				// everything already pumped, so a quick click's "down" would see the button released.
+				bool isPrimaryDown = fButtons & SDL_BUTTON(SDL_BUTTON_LEFT);
+				bool isSecondaryDown = fButtons & SDL_BUTTON(SDL_BUTTON_RIGHT);
+				bool isMiddleDown = fButtons & SDL_BUTTON(SDL_BUTTON_MIDDLE);
 
 				// Fetch the current state of the "shift", "alt", and "ctrl" keys.
 				const Uint8* key = SDL_GetKeyboardState(NULL);
@@ -272,16 +282,33 @@ namespace Rtt
 			const SDL_MouseWheelEvent& w = evt.wheel;
 			if (w.which != SDL_TOUCH_MOUSEID)
 			{
-				int scrollWheelDeltaX = w.x;
-				int scrollWheelDeltaY = w.y;
-				int x = w.x;
-				int y = w.y;
+				// As the Windows Simulator: deltas in content units, wheel down / right positive, one notch =
+				// 3 lines (or 3 characters) of the default font size. SDL gives notches, wheel up positive.
+				// (This used to pass the raw notches, sign flipped against Windows and macOS, and the deltas as
+				// the position.)
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+				const float notchesX = w.preciseX, notchesY = w.preciseY;   // fractional on smooth touchpads
+#else
+				const float notchesX = (float)w.x, notchesY = (float)w.y;
+#endif
+				Runtime* runtime = app->GetRuntime();
+				const float lineSize = 3.0f * Rtt_RealToFloat(runtime->Platform().GetStandardFontSize());
+				float scrollWheelDeltaX = notchesX * lineSize * Rtt_RealToFloat(runtime->GetDisplay().GetSxUpright());
+				float scrollWheelDeltaY = -notchesY * lineSize * Rtt_RealToFloat(runtime->GetDisplay().GetSyUpright());
+				int x = 0, y = 0;
+#if SDL_VERSION_ATLEAST(2, 26, 0)
+				x = w.mouseX;
+				y = w.mouseY;
+#else
+				SDL_GetMouseState(&x, &y);
+#endif
 				y -= app->GetMenuHeight();
 
-				// Fetch the mouse's current up/down buttons states.
-				bool isPrimaryDown = SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_LEFT);
-				bool isSecondaryDown = SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_RIGHT);
-				bool isMiddleDown = SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_MIDDLE);
+				// The buttons as of this event (as Windows' MK_ flags), not SDL_GetMouseState: that is the state after
+				// everything already pumped, so a quick click's "down" would see the button released.
+				bool isPrimaryDown = fButtons & SDL_BUTTON(SDL_BUTTON_LEFT);
+				bool isSecondaryDown = fButtons & SDL_BUTTON(SDL_BUTTON_RIGHT);
+				bool isMiddleDown = fButtons & SDL_BUTTON(SDL_BUTTON_MIDDLE);
 
 				// Fetch the current state of the "shift", "alt", and "ctrl" keys.
 				const Uint8* key = SDL_GetKeyboardState(NULL);
