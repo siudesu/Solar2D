@@ -1,0 +1,54 @@
+name: macOS Simulator (fix/mac-simulator)
+
+# Builds only the macOS Corona Simulator app from this branch, on a GitHub-hosted runner (the
+# Daily Build's macOS jobs need self-hosted "xcode-27" runners). No templates, DMG or notarization:
+# the app is ad-hoc signed and uploaded as an artifact.
+on:
+  push:
+    branches:
+      - fix/mac-simulator
+  workflow_dispatch:
+
+jobs:
+  simulator:
+    runs-on: macos-26
+    env:
+      BUILD_NUMBER: "3736"
+      YEAR: "2026"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+      - name: Stamp build number (as the official 2026.3736)
+        run: |
+          echo "MONTH=$(date +%-m)" >> "$GITHUB_ENV"
+          echo "DAY=$(date +%-d)" >> "$GITHUB_ENV"
+          echo "BUILD=$YEAR.$BUILD_NUMBER" >> "$GITHUB_ENV"
+      - run: ./tools/GHAction/process_sources.sh
+      - name: Build Corona Simulator.app (rttplayer)
+        run: |
+          set -o pipefail
+          xcodebuild -project platform/mac/ratatouille.xcodeproj -target rttplayer -configuration Release \
+            CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= \
+            OTHER_CODE_SIGN_FLAGS=--timestamp=none 2>&1 | tee xcodebuild.log | grep -E "error:|warning: .*GLView|BUILD (SUCCEEDED|FAILED)|\*\* " || true
+          tail -5 xcodebuild.log
+      - name: Package
+        run: |
+          APP="$(find platform/mac/build -maxdepth 3 -name 'Corona Simulator.app' -path '*Release*' | head -1)"
+          echo "app: $APP"
+          test -n "$APP"
+          codesign -dv "$APP" 2>&1 | head -5 || true
+          mkdir -p output
+          ditto -c -k --keepParent "$APP" "output/Corona-Simulator-mac-$YEAR.$BUILD_NUMBER-${GITHUB_SHA::8}.zip"
+          ls -l output
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Simulator-macOS-app
+          path: |
+            output
+            xcodebuild.log

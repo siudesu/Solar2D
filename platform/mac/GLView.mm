@@ -174,9 +174,14 @@
         NSOpenGLPFANoRecovery,
 		NSOpenGLPFADoubleBuffer,	// double buffered
         NSOpenGLPFADepthSize, (NSOpenGLPixelFormatAttribute)16, // 16 bit depth buffer
+#if ! Rtt_AUTHORING_SIMULATOR
+		// Simulator: no multisampled framebuffer. The config's "multisample" (default off) only toggles
+		// GL_MULTISAMPLE, but a 4x framebuffer costs every project: on an Intel Iris Pro at 2560x1440 the same
+		// frames took ~5x the GPU time (63% vs 13% at 60 fps). Linux's Simulator has none either.
 		NSOpenGLPFASampleBuffers, (NSOpenGLPixelFormatAttribute)1,
 		NSOpenGLPFASamples,(NSOpenGLPixelFormatAttribute)4,
-		
+#endif
+
         (NSOpenGLPixelFormatAttribute)0
     };
     return [[[NSOpenGLPixelFormat alloc] initWithAttributes:attributes] autorelease];
