@@ -9,6 +9,9 @@ on:
       - fix/mac-simulator
   workflow_dispatch:
 
+permissions:
+  contents: write   # the draft release below
+
 jobs:
   simulator:
     runs-on: macos-26
@@ -65,6 +68,19 @@ jobs:
         with:
           name: Simulator-macOS-app
           path: output
+      # Also on a DRAFT release (only the owner and collaborators see drafts): release assets come from
+      # GitHub's download CDN, artifacts from slow blob storage on our connection. Replaced each build.
+      - name: Draft release mac-sim-dev
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp output/*.zip Corona-Simulator-mac.zip
+          if ! gh release view mac-sim-dev > /dev/null 2>&1; then
+            gh release create mac-sim-dev --draft --target "$GITHUB_SHA" --title "Mac Simulator dev build (fix/mac-simulator)" \
+              --notes "Ad-hoc signed Corona Simulator.app from fix/mac-simulator. Replaced on every push."
+          fi
+          gh release upload mac-sim-dev Corona-Simulator-mac.zip --clobber
+          echo "::notice::draft release mac-sim-dev updated from ${GITHUB_SHA::8}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
