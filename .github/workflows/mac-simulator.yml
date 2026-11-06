@@ -43,6 +43,10 @@ jobs:
           # Errors as annotations: readable through the public API without signing in.
           grep -E "error:|\*\* BUILD|Command .* failed|returned a non-zero" xcodebuild.log | sort -u | head -40 | while IFS= read -r l; do echo "::error::${l:0:900}"; done
           tail -3 xcodebuild.log | while IFS= read -r l; do echo "::notice::${l:0:900}"; done
+          if [ $rc -ne 0 ]; then
+            echo "---- context of failed commands ----"
+            grep -n -B2 -A25 -E "^CodeSign |error:|errSecInternal|resource fork|code object is not signed" xcodebuild.log | grep -v "^\S*-    export " | tail -150
+          fi
           exit $rc
       - name: Package
         run: |
