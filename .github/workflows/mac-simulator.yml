@@ -44,7 +44,7 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER= > xcodebuild.log 2>&1
           rc=$?
           # Errors as annotations: readable through the public API without signing in.
-          grep -E "error:|\*\* BUILD|Command .* failed|returned a non-zero" xcodebuild.log | sort -u | head -40 | while IFS= read -r l; do echo "::error::${l:0:900}"; done
+          grep -E "error: |\*\* BUILD|Command .* failed|returned a non-zero" xcodebuild.log | sort -u | head -40 | while IFS= read -r l; do echo "::error::${l:0:900}"; done
           tail -3 xcodebuild.log | while IFS= read -r l; do echo "::notice::${l:0:900}"; done
           if [ $rc -ne 0 ]; then
             echo "---- context of failed commands ----"
