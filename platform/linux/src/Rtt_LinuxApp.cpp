@@ -183,7 +183,7 @@ namespace Rtt
 	void SolarApp::GetWindowSize(int* w, int* h)
 	{
 		SDL_GetWindowSize(fWindow, w, h);
-		*h = -GetMenuHeight();
+		*h -= GetMenuHeight();
 	}
 
 	bool SolarApp::LoadApp(const string& path)
@@ -296,7 +296,7 @@ namespace Rtt
 						//						SDL_GetDesktopDisplayMode(0, &dm);
 						int w, h;
 						GetWindowSize(&w, &h);
-						//		fContext->SetSize(w, h);
+						fContext->OnWindowResized(w, h);   // only resizable windows change size this way
 					}
 					break;
 				}

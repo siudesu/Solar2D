@@ -72,6 +72,7 @@ namespace Rtt
 		void Pause();
 		void Resume();
 		void RestartRenderer();
+		void OnWindowResized(int w, int h);
 		int GetFPS() const { return fRuntime ? fRuntime->GetFPS() : 30; }
 		int GetWidth() const;
 		void SetWidth(int val);

@@ -389,6 +389,20 @@ namespace Rtt
 		int w = fConfig["w"].to_int() > 0 ? fConfig["w"].to_int() : GetWidth();
 		int h = fConfig["h"].to_int() > 0 ? fConfig["h"].to_int() : GetHeight();
 
+		// build.settings window.resizable / minViewWidth / minViewHeight, as on Windows and macOS: the
+		// window can be resized (and maximized) by the user, never below the minimum; the saved size is
+		// clamped to it. Size changes reach the runtime through OnWindowResized (resize event).
+		if (fProjectSettings->HasBuildSettings() && fProjectSettings->IsWindowResizable())
+		{
+			const int minW = fProjectSettings->GetMinWindowViewWidth();
+			const int minH = fProjectSettings->GetMinWindowViewHeight();
+			if (minW > 0 && w < minW) w = minW;
+			if (minH > 0 && h < minH) h = minH;
+			SDL_SetWindowResizable(fWindow, SDL_TRUE);
+			if (minW > 0 && minH > 0)
+				SDL_SetWindowMinimumSize(fWindow, minW, minH + app->GetMenuHeight());
+		}
+
 		SDL_DisplayMode dm;
 		SDL_GetCurrentDisplayMode(0, &dm);
 		int x = fConfig["x"].to_int() > 0 ? fConfig["x"].to_int() : (dm.w - w) / 2;
@@ -461,6 +475,17 @@ namespace Rtt
 			fRuntime->DispatchEvent(ResizeEvent());
 			fRuntime->Resume();
 		}
+	}
+
+	// The user resized the window (content area w x h): the runtime takes the new size and gets a
+	// resize event. Unlike SetSize, the window itself is left alone.
+	void SolarAppContext::OnWindowResized(int w, int h)
+	{
+		if (w <= 0 || h <= 0 || (w == GetWidth() && h == GetHeight()))
+			return;
+		SetWidth(w);
+		SetHeight(h);
+		RestartRenderer();
 	}
 
 	void SolarAppContext::RestartRenderer()
