@@ -68,6 +68,9 @@ namespace Rtt
 @property (nonatomic, assign) NSInteger adaptiveHeight;
 
 + (NSOpenGLPixelFormat*) basicPixelFormat;
+// Simulator only: whether views created from now on get a 4x multisampled framebuffer (the project's
+// config.lua "multisample"; default NO). Set before creating the view.
++ (void) setSimulatorMultisample:(BOOL)enabled;
 
 - (void)setDelegate:(id< GLViewDelegate >)delegate;
 

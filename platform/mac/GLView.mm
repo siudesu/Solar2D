@@ -163,27 +163,46 @@
 @synthesize adaptiveWidth;
 @synthesize adaptiveHeight;
 
+// Simulator: a multisampled framebuffer only for projects whose config.lua asks for "multisample" (set by
+// MacSimulator before it creates the view). The config only toggles GL_MULTISAMPLE, but a 4x framebuffer costs every
+// project: on an Intel Iris Pro at 2560x1440 the same frames took ~5x the GPU time (63% vs 13% at 60 fps), and
+// the SE2 editor went from ~40 to 60 fps. Linux's Simulator has none. macOS app builds keep 4x always.
+#if Rtt_AUTHORING_SIMULATOR
+static BOOL sSimulatorMultisample = NO;
+#endif
+
++ (void) setSimulatorMultisample:(BOOL)enabled
+{
+#if Rtt_AUTHORING_SIMULATOR
+	sSimulatorMultisample = enabled;
+#endif
+}
+
 // pixel format definition
 + (NSOpenGLPixelFormat*) basicPixelFormat
 {
 
 //#if 0
 
+#if Rtt_AUTHORING_SIMULATOR
+	const BOOL multisample = sSimulatorMultisample;
+#else
+	const BOOL multisample = YES;
+#endif
 
     NSOpenGLPixelFormatAttribute attributes [] = {
         NSOpenGLPFANoRecovery,
 		NSOpenGLPFADoubleBuffer,	// double buffered
         NSOpenGLPFADepthSize, (NSOpenGLPixelFormatAttribute)16, // 16 bit depth buffer
-#if ! Rtt_AUTHORING_SIMULATOR
-		// Simulator: no multisampled framebuffer. The config's "multisample" (default off) only toggles
-		// GL_MULTISAMPLE, but a 4x framebuffer costs every project: on an Intel Iris Pro at 2560x1440 the same
-		// frames took ~5x the GPU time (63% vs 13% at 60 fps). Linux's Simulator has none either.
 		NSOpenGLPFASampleBuffers, (NSOpenGLPixelFormatAttribute)1,
 		NSOpenGLPFASamples,(NSOpenGLPixelFormatAttribute)4,
-#endif
 
         (NSOpenGLPixelFormatAttribute)0
     };
+    if ( ! multisample )
+    {
+        attributes[4] = (NSOpenGLPixelFormatAttribute)0; // end the list before the sample-buffer attributes
+    }
     return [[[NSOpenGLPixelFormat alloc] initWithAttributes:attributes] autorelease];
 
 /*

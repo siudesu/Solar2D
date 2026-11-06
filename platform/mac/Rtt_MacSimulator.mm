@@ -12,6 +12,9 @@
 #include "Rtt_MacSimulator.h"
 
 #include "Rtt_Lua.h"
+#include "Core/Rtt_FileSystem.h"
+#include "Rtt_MPlatform.h"
+#include "Core/Rtt_String.h"
 #include "Rtt_MacPlatform.h"
 #include "Rtt_MacSurfaceVideoRecorder.h"
 #include "Rtt_MacViewCallback.h"
@@ -46,6 +49,56 @@
 
 namespace Rtt
 {
+
+// ----------------------------------------------------------------------------
+
+// Whether the project's config.lua sets application.content.multisample = true, read before the GL view exists
+// (the runtime reads config.lua only after the view and its context are made). Runs config.lua in a plain Lua
+// state like the settings validation: unknown globals (display, system, ...) are empty tables, so a config that
+// only reads engine values still runs; one that calls engine functions fails and counts as "no".
+static bool
+ProjectConfigWantsMultisample( const MPlatform& platform )
+{
+	String resourcePath;
+	platform.PathForFile( NULL, MPlatform::kResourceDir, MPlatform::kTestFileExists, resourcePath );
+	String configPath;
+	configPath.Set( resourcePath );
+	configPath.AppendPathComponent( "config.lua" );
+	if ( ! Rtt_FileExists( configPath.GetString() ) )
+	{
+		return false;
+	}
+
+	static const char kReader[] =
+		"local path = ...\n"
+		"local f = io.open(path, 'r'); if not f then return false end\n"
+		"local src = f:read('*a'); f:close()\n"
+		"local chunk = loadstring(src); if not chunk then return false end\n"
+		"local empty = setmetatable({}, { __index = function() return nil end })\n"
+		"local env = setmetatable({ print = function() end }, { __index = function(_, k)\n"
+		"  local v = _G[k]; if v ~= nil then return v end; return empty end })\n"
+		"setfenv(chunk, env)\n"
+		"if not pcall(chunk) then return false end\n"
+		"local app = rawget(env, 'application')\n"
+		"return type(app) == 'table' and type(app.content) == 'table' and app.content.multisample == true\n";
+
+	bool result = false;
+	lua_State *L = luaL_newstate();
+	if ( L )
+	{
+		luaL_openlibs( L );
+		if ( 0 == luaL_loadbuffer( L, kReader, sizeof( kReader ) - 1, "=multisample" ) )
+		{
+			lua_pushstring( L, configPath.GetString() );
+			if ( 0 == lua_pcall( L, 1, 1, 0 ) )
+			{
+				result = lua_toboolean( L, -1 ) != 0;
+			}
+		}
+		lua_close( L );
+	}
+	return result;
+}
 
 // ----------------------------------------------------------------------------
 
@@ -239,6 +292,14 @@ MacSimulator::Initialize(
 		screenOrigin.y = 0;
 	}
 	NSRect screenRect = { screenOrigin, screenSize };
+
+	// A multisampled framebuffer only when the project asks for it (see GLView basicPixelFormat).
+	const bool multisample = ProjectConfigWantsMultisample( *platform );
+	[GLView setSimulatorMultisample:multisample];
+	if ( multisample )
+	{
+		Rtt_TRACE_SIM( ( "Simulator: 4x multisampled framebuffer (config.lua multisample = true)\n" ) );
+	}
 
 	GLView* screenView = [[GLView alloc] initWithFrame:screenRect];
 	[screenView autorelease];
