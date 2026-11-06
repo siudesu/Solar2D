@@ -126,6 +126,10 @@ namespace Rtt
 		flags |= SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI;
 		fWindow = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, flags);
 		fGLcontext = SDL_GL_CreateContext(fWindow);
+		// No vsync for secondary windows (Console, dialogs): the main loop swaps each of them every pass,
+		// and a covered or minimized window's vsync swap can block for about a second under XWayland,
+		// stalling the whole Simulator. The main window keeps vsync and paces the loop.
+		SDL_GL_SetSwapInterval(0);
 
 		fImCtx = ImGui::CreateContext();
 		ImGui::SetCurrentContext(fImCtx);
