@@ -112,9 +112,22 @@ class RenderSurfaceControl : public Control
 			/// <returns>Returns true if Vulkan must be the backend; if optional or not even requested, false.</returns>
 			bool IsVulkanRequired() const;
 
+			/// <summary>Request a multisampled (antialiased) OpenGL framebuffer.</summary>
+			/// <param name="wanted">
+			///  True if the project's "config.lua" set "multisample = true". If false (the default),
+			///  a single-sampled framebuffer is used, which is cheaper and looks the same for projects
+			///  that don't enable multisampling.
+			/// </param>
+			void SetMultisampleWanted(bool wanted);
+
+			/// <summary>Determines if a multisampled framebuffer was requested.</summary>
+			/// <returns>Returns true if requested via SetMultisampleWanted(), false otherwise.</returns>
+			bool IsMultisampleWanted() const;
+
 		private:
 			bool fWantVulkan;
 			bool fRequireVulkan;
+			bool fWantMultisample;
 		};
 
 		#pragma region Constructors/Destructors
@@ -185,6 +198,10 @@ class RenderSurfaceControl : public Control
 
 		bool IsUsingVulkanBackend() const { return !!fVulkanContext; }
 		void * GetBackendContext() const { return IsUsingVulkanBackend() ? fVulkanContext : nullptr; }
+
+		/// <summary>Gets the number of samples per pixel of the OpenGL framebuffer.</summary>
+		/// <returns>Returns 0 if the framebuffer is not multisampled (or for the Vulkan backend).</returns>
+		int GetMultisampleCount() const { return fMultisampleCount; }
 
 		#pragma endregion
 
@@ -274,6 +291,9 @@ class RenderSurfaceControl : public Control
 
 		/// <summary>Vulkan analogue to the GL context, when chosen as the backend.</summary>
 		void * fVulkanContext;
+
+		/// <summary>Samples per pixel of the OpenGL framebuffer; 0 if not multisampled.</summary>
+		int fMultisampleCount;
 
 		#pragma endregion
 };

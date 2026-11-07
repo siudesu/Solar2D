@@ -29,7 +29,8 @@ RenderSurfaceControl::RenderSurfaceControl(HWND windowHandle, const Params & par
 	fRenderFrameEventHandlerPointer(nullptr),
 	fMainDeviceContextHandle(nullptr),
 	fRenderingContextHandle(nullptr),
-	fVulkanContext(nullptr)
+	fVulkanContext(nullptr),
+	fMultisampleCount(0)
 {
 	// Add event handlers.
 	GetReceivedMessageEventHandlers().Add(&fReceivedMessageEventHandler);
@@ -185,8 +186,17 @@ void RenderSurfaceControl::CreateContext(const Params & params)
 		}
 	}
 
-	// Query the video hardware for multisampling result.
-	auto multisampleTestResult = FetchMultisampleFormat();
+	// Query the video hardware for a multisampled pixel format, but only if the project asked for one
+	// via "config.lua" (application.content.multisample = true). A multisampled framebuffer costs memory
+	// and per-sample work every frame, and projects without "multisample = true" never draw with it
+	// (the runtime calls glDisable(GL_MULTISAMPLE)), so they look the same without it.
+	// The Vulkan backend creates its multisample resources on demand, so it is always queried.
+	fMultisampleCount = 0;
+	FetchMultisampleFormatResult multisampleTestResult;
+	if (fVulkanContext || params.IsMultisampleWanted())
+	{
+		multisampleTestResult = FetchMultisampleFormat();
+	}
 
 	if (fVulkanContext)
 	{
@@ -225,7 +235,19 @@ void RenderSurfaceControl::CreateContext(const Params & params)
 		{
 			pixelFormatIndex = multisampleTestResult.PixelFormatIndex;
 		}
-		BOOL wasFormatSet = ::SetPixelFormat(fMainDeviceContextHandle, pixelFormatIndex, &pixelFormatDescriptor);
+
+		// A window's pixel format can only be set once. If it already has one, keep it.
+		BOOL wasFormatSet = FALSE;
+		int existingPixelFormatIndex = ::GetPixelFormat(fMainDeviceContextHandle);
+		if ((existingPixelFormatIndex > 0) && (existingPixelFormatIndex != pixelFormatIndex))
+		{
+			Rtt_Log("WARNING: The render surface already has a pixel format. Keeping it.\n");
+			wasFormatSet = TRUE;
+		}
+		else
+		{
+			wasFormatSet = ::SetPixelFormat(fMainDeviceContextHandle, pixelFormatIndex, &pixelFormatDescriptor);
+		}
 		if (!wasFormatSet)
 		{
 			DestroyContext();
@@ -261,6 +283,21 @@ void RenderSurfaceControl::CreateContext(const Params & params)
 
 		// Load OpenGL extensions.
 		glewInit();
+
+		// Report the framebuffer's actual sample count.
+		{
+			GLint sampleCount = 0;
+			::glGetIntegerv(GL_SAMPLES, &sampleCount);
+			fMultisampleCount = (sampleCount > 1) ? (int)sampleCount : 0;
+			if (fMultisampleCount > 0)
+			{
+				Rtt_Log("Windows: %dx multisampled framebuffer (config.lua multisample = true)\n", fMultisampleCount);
+			}
+			else if (params.IsMultisampleWanted())
+			{
+				Rtt_Log("WARNING: config.lua sets multisample = true, but this video driver has no multisampled pixel format.\n");
+			}
+		}
 
 		// Fetch the OpenGL driver's version.
 		const char* versionString = (const char*)glGetString(GL_VERSION);
@@ -615,7 +652,8 @@ int RenderSurfaceControl::Version::CompareTo(const RenderSurfaceControl::Version
 
 RenderSurfaceControl::Params::Params()
 :	fWantVulkan( false ),
-	fRequireVulkan( false )
+	fRequireVulkan( false ),
+	fWantMultisample( false )
 {
 }
 
@@ -633,6 +671,16 @@ bool RenderSurfaceControl::Params::IsVulkanWanted() const
 bool RenderSurfaceControl::Params::IsVulkanRequired() const
 {
 	return fRequireVulkan;
+}
+
+void RenderSurfaceControl::Params::SetMultisampleWanted(bool wanted)
+{
+	fWantMultisample = wanted;
+}
+
+bool RenderSurfaceControl::Params::IsMultisampleWanted() const
+{
+	return fWantMultisample;
 }
 
 #pragma endregion

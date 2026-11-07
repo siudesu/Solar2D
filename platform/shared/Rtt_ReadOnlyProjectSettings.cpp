@@ -126,6 +126,11 @@ const char * ReadOnlyProjectSettings::Backend() const
 	return fSettings.Backend().c_str();
 }
 
+bool ReadOnlyProjectSettings::IsMultisampleEnabled() const
+{
+	return fSettings.IsMultisampleEnabled();
+}
+
 int ReadOnlyProjectSettings::GetContentWidth() const
 {
 	return fSettings.GetContentWidth();

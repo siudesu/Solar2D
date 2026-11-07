@@ -361,6 +361,16 @@ class ProjectSettings
 		 */
 		const std::string & Backend() const;
 
+		/**
+		 * Determines if "config.lua" set "application.content.multisample" to true.
+		 * @return
+		 * Returns true if the project asked for multisampled (antialiased) rendering.
+		 *
+		 * Returns false if not set, false, or if "config.lua" failed to load here
+		 * (e.g. it uses display.* APIs, which are not available when settings are pre-loaded).
+		 */
+		bool IsMultisampleEnabled() const;
+
 	protected:
 		/**
 		 * Called after the LoadFromDirectory() method has successfully loaded information from the
@@ -504,6 +514,9 @@ class ProjectSettings
 
 		/** One of the following: "gl", "wantVulkan", "requireVulkan".*/
 		std::string fBackend;
+
+		/** Set to true if "config.lua" set "application.content.multisample" to true. */
+		bool fIsMultisampleEnabled;
 };
 
 } // namespace Rtt

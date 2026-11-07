@@ -373,6 +373,12 @@ bool ProjectSettings::LoadFromDirectory(const char* directoryPath)
 			}
 			lua_pop(luaStatePointer, 1);
 
+			// Fetch the "multisample" setting. Read here, before the render surface is created,
+			// so that platforms can choose a multisampled framebuffer only when the project asks for one.
+			lua_getfield(luaStatePointer, -1, "multisample");
+			fIsMultisampleEnabled = lua_toboolean(luaStatePointer, -1) ? true : false;
+			lua_pop(luaStatePointer, 1);
+
 			// Fetch the content width and height if content scaling is enabled.
 			if ((scaleMode != Rtt::Display::kNone) && (scaleMode != Rtt::Display::kAdaptive))
 			{
@@ -530,6 +536,7 @@ void ProjectSettings::ResetConfigLuaSettings()
 	fHasConfigLua = false;
 	fContentWidth = 0;
 	fContentHeight = 0;
+	fIsMultisampleEnabled = false;
 	fImageSuffixScaleSet.clear();
 }
 
@@ -768,6 +775,11 @@ bool ProjectSettings::IsWindowTransparent() const
 const std::string & ProjectSettings::Backend() const
 {
 	return fBackend;
+}
+
+bool ProjectSettings::IsMultisampleEnabled() const
+{
+	return fIsMultisampleEnabled;
 }
 
 void ProjectSettings::OnLoadedFrom(lua_State* luaStatePointer)

@@ -251,6 +251,13 @@ class ReadOnlyProjectSettings
 		const char * Backend() const;
 
 		/**
+		 * Determines if "config.lua" set "application.content.multisample" to true.
+		 * @return
+		 * Returns true if the project asked for multisampled (antialiased) rendering.
+		 */
+		bool IsMultisampleEnabled() const;
+
+		/**
 		 * Gets the content width provided by the "config.lua" file.
 		 * @return
 		 * Returns the "config.lua" file's content width.

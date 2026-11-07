@@ -302,6 +302,9 @@ RuntimeEnvironment::RuntimeEnvironment(const RuntimeEnvironment::CreationSetting
 			params.SetVulkanWanted(requireVulkan);
 		}
 
+		// Only create a multisampled OpenGL framebuffer if "config.lua" asks for it ("multisample = true").
+		params.SetMultisampleWanted(fReadOnlyProjectSettings.IsMultisampleEnabled());
+
 		fRenderSurfacePointer = new Interop::UI::RenderSurfaceControl(settings.RenderSurfaceHandle, params);
 		fRenderSurfacePointer->SetRenderFrameHandler(&fRenderFrameEventHandler);
 		fRenderSurfacePointer->GetDestroyingEventHandlers().Add(&fDestroyingSurfaceEventHandler);
@@ -1378,6 +1381,16 @@ OperationResult RuntimeEnvironment::RunUsing(const RuntimeEnvironment::CreationS
 	auto result = fRuntimePointer->LoadApplication(updatedLaunchOptions, fLastOrientation);
 	if (Rtt::Runtime::kSuccess == result)
 	{
+		// The render surface's multisampled framebuffer is chosen from "config.lua" before the runtime
+		// exists. Warn if the runtime's own read of "config.lua" wants multisampling but the early read missed it,
+		// which happens when "config.lua" fails without the runtime (e.g. it uses display.* APIs).
+		if (fRenderSurfacePointer && !fRenderSurfacePointer->IsUsingVulkanBackend() &&
+		    fRuntimePointer->GetDisplay().IsAntialiased() && !fReadOnlyProjectSettings.IsMultisampleEnabled())
+		{
+			Rtt_Log("WARNING: config.lua sets multisample = true, but it could not be read before the window was created "
+			        "(does config.lua use display.* APIs?). Edges will not be smoothed.\n");
+		}
+
 		// Load was successful. Start running the Corona application.
 		fRuntimePointer->BeginRunLoop();
 		OnRuntimeTimerElapsed();
