@@ -145,6 +145,17 @@ namespace Rtt
 		else
 		{
 			fRuntime->SetProperty(Runtime::kLinuxMaskSet, true);
+#ifdef Rtt_AUTHORING_SIMULATOR
+			// --shell mode in the Simulator build: Runtime() marked the app "not archived" (the Simulator always runs
+			// main.lua). A project shipped compiled -- resource.car and no main.lua, as Solar2D's own app builds --
+			// runs from its archive instead (Runtime::LoadApplication finds resource.car in the project folder).
+			const std::string carPath = fPathToApp + "/resource.car";
+			const std::string mainPath = fPathToApp + "/main.lua";
+			if (Rtt_FileExists(carPath.c_str()) && !Rtt_FileExists(mainPath.c_str()))
+			{
+				fRuntime->SetProperty(Runtime::kIsApplicationNotArchived, false);
+			}
+#endif
 		}
 
 		bool fullScreen = false;
