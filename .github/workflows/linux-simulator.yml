@@ -42,7 +42,9 @@ jobs:
           set +e
           ninja -C build > ninja.log 2>&1
           rc=$?
-          grep -E "error: |FAILED:" ninja.log | sort -u | head -40 | while IFS= read -r l; do echo "::error::${l:0:900}"; done
+          # Only real diagnostics ("file:line:col: error:" at the start of a line) and ninja's FAILED lines: a source
+          # line quoted under a warning can contain "error: " too (a false annotation on a green run, 134be456).
+          grep -E "^[^ :]+:[0-9]+:([0-9]+:)? (fatal )?error: |^FAILED:" ninja.log | sort -u | head -40 | while IFS= read -r l; do echo "::error::${l:0:900}"; done
           tail -3 ninja.log
           [ $rc -ne 0 ] && grep -n -B2 -A20 -E "FAILED:|error: " ninja.log | tail -150
           exit $rc
