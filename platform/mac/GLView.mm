@@ -10,6 +10,7 @@
 #include "Core/Rtt_Build.h"
 
 #import "GLView.h"
+#include "Rtt_Lua.h"
 #include <OpenGL/gl.h>
 
 #import <AppKit/NSApplication.h>
@@ -176,6 +177,71 @@ static BOOL sSimulatorMultisample = NO;
 #if Rtt_AUTHORING_SIMULATOR
 	sSimulatorMultisample = enabled;
 #endif
+}
+
+// Runs config.lua like the settings validation: unknown globals (display, system, ...) are empty tables, so a
+// config that only reads engine values still runs; one that calls engine functions fails (-1).
++ (int) configMultisampleAt:(NSString*)configPath
+{
+	if ( ! configPath || ! [[NSFileManager defaultManager] isReadableFileAtPath:configPath] )
+	{
+		return -1;
+	}
+	static const char kReader[] =
+		"local path = ...\n"
+		"local f = io.open(path, 'r'); if not f then return -1 end\n"
+		"local src = f:read('*a'); f:close()\n"
+		"local chunk = loadstring(src); if not chunk then return -1 end\n"
+		"local empty = setmetatable({}, { __index = function() return nil end })\n"
+		"local env = setmetatable({ print = function() end }, { __index = function(_, k)\n"
+		"  local v = _G[k]; if v ~= nil then return v end; return empty end })\n"
+		"setfenv(chunk, env)\n"
+		"if not pcall(chunk) then return -1 end\n"
+		"local app = rawget(env, 'application')\n"
+		"return (type(app) == 'table' and type(app.content) == 'table' and app.content.multisample == true) and 1 or 0\n";
+
+	int result = -1;
+	lua_State *L = luaL_newstate();
+	if ( L )
+	{
+		luaL_openlibs( L );
+		if ( 0 == luaL_loadbuffer( L, kReader, sizeof( kReader ) - 1, "=multisample" ) )
+		{
+			lua_pushstring( L, [configPath UTF8String] );
+			if ( 0 == lua_pcall( L, 1, 1, 0 ) && lua_isnumber( L, -1 ) )
+			{
+				result = (int)lua_tointeger( L, -1 );
+			}
+		}
+		lua_close( L );
+	}
+	return result;
+}
+
+// App builds (CoronaCards / CoronaShell): their view comes from a nib, before the project is known, so it starts with
+// the 4x format. A project running from a folder whose config.lua doesn't set multisample = true gets a plain format
+// here, before the runtime makes the context current (the format matters only when the context is created). When the
+// config can't be read (compiled resource.car apps, a config that needs the engine) the 4x format stays, as before.
+- (void) applyProjectMultisample:(NSString*)projectPath
+{
+	NSString *config = [projectPath stringByAppendingPathComponent:@"config.lua"];
+	if ( 0 != [GLView configMultisampleAt:config] )
+	{
+		return;
+	}
+	NSOpenGLPixelFormatAttribute attributes [] = {
+		NSOpenGLPFANoRecovery,
+		NSOpenGLPFADoubleBuffer,
+		NSOpenGLPFADepthSize, (NSOpenGLPixelFormatAttribute)16,
+		(NSOpenGLPixelFormatAttribute)0
+	};
+	NSOpenGLPixelFormat *pf = [[[NSOpenGLPixelFormat alloc] initWithAttributes:attributes] autorelease];
+	if ( pf )
+	{
+		[self clearGLContext];
+		[self setPixelFormat:pf];
+		NSLog( @"Corona: no multisampled framebuffer (config.lua has no multisample = true)" );
+	}
 }
 
 // pixel format definition

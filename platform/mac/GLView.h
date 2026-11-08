@@ -71,6 +71,12 @@ namespace Rtt
 // Simulator only: whether views created from now on get a 4x multisampled framebuffer (the project's
 // config.lua "multisample"; default NO). Set before creating the view.
 + (void) setSimulatorMultisample:(BOOL)enabled;
+// application.content.multisample in the config.lua at configPath, read in a plain Lua state before the runtime
+// exists: 1 = true, 0 = not set / false, -1 = can't tell (no such file, or the config fails without the engine).
++ (int) configMultisampleAt:(NSString*)configPath;
+// App builds (CoronaCards, CoronaShell): before the project runs and before any GL context exists, drop the 4x
+// multisampled framebuffer when the project's config.lua doesn't ask for multisample (see GLView.mm).
+- (void) applyProjectMultisample:(NSString*)projectPath;
 
 - (void)setDelegate:(id< GLViewDelegate >)delegate;
 

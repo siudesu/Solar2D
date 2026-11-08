@@ -153,6 +153,7 @@ Rtt_EXPORT const luaL_Reg* Rtt_GetCustomModulesList()
 	}
 
 	_projectPath = [path retain];
+	[self.glView applyProjectMultisample:_projectPath];   // before the runtime makes the GL context current
 	platform->SetResourcePath( [_projectPath UTF8String] );
 
 	platform->Initialize( self.glView );

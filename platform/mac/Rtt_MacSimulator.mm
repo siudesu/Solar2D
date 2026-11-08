@@ -64,40 +64,7 @@ ProjectConfigWantsMultisample( const MPlatform& platform )
 	String configPath;
 	configPath.Set( resourcePath );
 	configPath.AppendPathComponent( "config.lua" );
-	if ( ! Rtt_FileExists( configPath.GetString() ) )
-	{
-		return false;
-	}
-
-	static const char kReader[] =
-		"local path = ...\n"
-		"local f = io.open(path, 'r'); if not f then return false end\n"
-		"local src = f:read('*a'); f:close()\n"
-		"local chunk = loadstring(src); if not chunk then return false end\n"
-		"local empty = setmetatable({}, { __index = function() return nil end })\n"
-		"local env = setmetatable({ print = function() end }, { __index = function(_, k)\n"
-		"  local v = _G[k]; if v ~= nil then return v end; return empty end })\n"
-		"setfenv(chunk, env)\n"
-		"if not pcall(chunk) then return false end\n"
-		"local app = rawget(env, 'application')\n"
-		"return type(app) == 'table' and type(app.content) == 'table' and app.content.multisample == true\n";
-
-	bool result = false;
-	lua_State *L = luaL_newstate();
-	if ( L )
-	{
-		luaL_openlibs( L );
-		if ( 0 == luaL_loadbuffer( L, kReader, sizeof( kReader ) - 1, "=multisample" ) )
-		{
-			lua_pushstring( L, configPath.GetString() );
-			if ( 0 == lua_pcall( L, 1, 1, 0 ) )
-			{
-				result = lua_toboolean( L, -1 ) != 0;
-			}
-		}
-		lua_close( L );
-	}
-	return result;
+	return 1 == [GLView configMultisampleAt:[NSString stringWithUTF8String:configPath.GetString()]];
 }
 
 // ----------------------------------------------------------------------------
