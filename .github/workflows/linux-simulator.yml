@@ -1,0 +1,95 @@
+name: Linux Simulator (fix/linux-simulator)
+
+# Builds only the Linux Solar2DSimulator from this branch on a GitHub-hosted Ubuntu 24.04 runner, for
+# SolarExpress2's Linux package (its "--shell" mode runs the editor and Play). Built on 24.04 so the
+# binary needs glibc 2.39 at most and also runs on newer Ubuntu releases. The upstream Linux job (Snap,
+# Flatpak) is disabled in build.yml; nothing here touches it. Output: Solar2DSimulator + Resources/
+# as a tarball (artifact, and a draft release for fast downloads).
+on:
+  push:
+    branches:
+      - fix/linux-simulator
+  workflow_dispatch:
+
+permissions:
+  contents: write   # the draft release below
+
+jobs:
+  simulator:
+    runs-on: ubuntu-24.04
+    env:
+      BUILD_NUMBER: "3736"
+      YEAR: "2026"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Packages (platform/linux/setup_dev.sh, without Java / GTK / WebKit, which the Simulator doesn't link)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build build-essential zlib1g-dev libgl1-mesa-dev libglu1-mesa-dev \
+            libopenal-dev libfreetype-dev libpng-dev libcurl4-openssl-dev libjpeg-dev libssl-dev libvorbis-dev \
+            libogg-dev uuid-dev libsdl2-dev
+          cmake --version | head -1; gcc --version | head -1; ldd --version | head -1
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_C_FLAGS="-Wno-error=incompatible-pointer-types -Wno-error=implicit-function-declaration" \
+            > cmake.log 2>&1 || { tail -60 cmake.log; exit 1; }
+          tail -5 cmake.log
+      - name: Build (all targets, as the laptop's build; Resources/ also gets the Linux app template)
+        run: |
+          set +e
+          ninja -C build > ninja.log 2>&1
+          rc=$?
+          grep -E "error: |FAILED:" ninja.log | sort -u | head -40 | while IFS= read -r l; do echo "::error::${l:0:900}"; done
+          tail -3 ninja.log
+          [ $rc -ne 0 ] && grep -n -B2 -A20 -E "FAILED:|error: " ninja.log | tail -150
+          exit $rc
+      - name: Check (glibc, libraries, version)
+        run: |
+          B=build/Solar2DSimulator
+          test -x "$B" && test -d build/Resources
+          ls -l "$B"; du -sh build/Resources
+          echo "glibc symbols needed (max):"
+          objdump -T "$B" | grep -o "GLIBC_[0-9.]*" | sort -Vu | tail -1
+          echo "NEEDED:"; objdump -p "$B" | grep NEEDED
+          max=$(objdump -T "$B" | grep -o "GLIBC_[0-9.]*" | sort -Vu | tail -1 | cut -d_ -f2)
+          if [ "$(printf '%s\n2.39\n' "$max" | sort -V | tail -1)" != "2.39" ]; then
+            echo "::error::needs glibc $max, more than Ubuntu 24.04's 2.39"; exit 1
+          fi
+          echo "::notice::Solar2DSimulator needs glibc $max"
+      - name: Package
+        run: |
+          mkdir -p pkg/solar2d-linux && cp -a build/Solar2DSimulator build/Resources pkg/solar2d-linux/
+          cp LICENSE.md pkg/solar2d-linux/
+          printf 'Solar2DSimulator %s.%s, branch %s, commit %s, built on %s\n' "$YEAR" "$BUILD_NUMBER" \
+            "${GITHUB_REF_NAME}" "${GITHUB_SHA}" "$(lsb_release -ds)" > pkg/solar2d-linux/BUILD.txt
+          mkdir -p output
+          tar -C pkg -czf "output/solar2d-linux-x86_64-$YEAR.$BUILD_NUMBER-${GITHUB_SHA::8}.tar.gz" solar2d-linux
+          ls -l output
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Simulator-Linux-x86_64
+          path: output
+      # Also on a DRAFT release (only the owner and collaborators see drafts): release assets download much
+      # faster than artifacts on our connection. Replaced on every push.
+      - name: Draft release linux-sim-dev
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp output/*.tar.gz solar2d-linux-x86_64.tar.gz
+          if ! gh release view linux-sim-dev > /dev/null 2>&1; then
+            gh release create linux-sim-dev --draft --target "$GITHUB_SHA" --title "Linux Simulator dev build (fix/linux-simulator)" \
+              --notes "Solar2DSimulator + Resources from fix/linux-simulator, built on Ubuntu 24.04. Replaced on every push."
+          fi
+          gh release upload linux-sim-dev solar2d-linux-x86_64.tar.gz --clobber
+          echo "::notice::draft release linux-sim-dev updated from ${GITHUB_SHA::8}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-logs
+          path: |
+            cmake.log
+            ninja.log
